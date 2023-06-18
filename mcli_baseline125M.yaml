@@ -1,0 +1,21 @@
+run_name: source-code-doremi-125M-baseline
+platform: r1z1
+gpu_type: a100_80gb
+gpu_num: 8
+image: mosaicml/llm-foundry:1.13.1_cu117-latest
+integrations:
+  - integration_type: git_repo
+    git_repo: zankner/doremi
+    git_branch: main
+    # git_commit: # OR use your commit hash
+    pip_install: --use-pep51 -e .
+    ssh_clone: false # Should be true if using a private repo
+  - integration_type: pip_packages
+    packages:
+      - oci-cli
+#
+command: |
+  pip install oci-cli
+  cd doremi
+  bash scripts/runs/run_pile_baseline125M.sh
+  oci os object bulk-upload -bn mosaicml-internal-doremi --src-dir /tmp/doremi/models --prefix official-implementation/125M-params/reference/ > /dev/null

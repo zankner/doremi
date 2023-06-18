@@ -17,6 +17,7 @@ export HF_DATASETS_IN_MEMORY_MAX_SIZE=0
 export TORCH_EXTENSIONS_DIR=$CACHE
 export TMPDIR=$CACHE
 export WANDB_DIR=${CACHE}/wandb
+export WANDB_PROJECT=official-doremi
 
 PREPROCESSED_DATA=${PREPROCESSED_PILE_DIR}
 PREPROCESSED_CACHE=${CACHE}/preprocessed_cache/perdomain_pile_preprocessed
@@ -26,14 +27,13 @@ if [ ! -d "${PREPROCESSED_CACHE}" ]; then
     cp -r ${PREPROCESSED_DATA} ${PREPROCESSED_CACHE}
 fi
 
-# SET DEVICE TO BE 32 and GRAD ACCUM TO BE 2
 # USING ADAFACTOR BUT FOUNDRY USES LION
-# CHANGE NUM PROCESSES TO BE 8
+# Set max steps as 100_000 and save steps as 5_000
 
-NAME=pile_baseline_280M
+NAME=pile_baseline_125M
 accelerate launch \
     --config_file accelerate_config.yml \
-    --num_processes 2 \
+    --num_processes 8 \
     --multi_gpu \
     --num_machines 1 \
     --main_process_port 60200 \
@@ -49,10 +49,10 @@ accelerate launch \
     --per_device_train_batch_size 32 \
     --gradient_accumulation_steps 2 \
     --dataloader_num_workers 8 \
-    --max_steps 100000 \
+    --max_steps 100 \
     --evaluation_strategy no \
     --save_strategy steps \
-    --save_steps 5000 \
+    --save_steps 50 \
     --learning_rate 2.0e-4 \
     --lr_end 0 \
     --weight_decay 0.0006 \
