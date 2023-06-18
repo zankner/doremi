@@ -46,8 +46,8 @@ accelerate launch \
     --domain_config_path configs/mpt_pile_baseline_50kvocab.json \
     --output_dir ${MODEL_OUTPUT_DIR}/${NAME} \
     --max_token_length 2048 \
-    --per_device_train_batch_size 32 \
-    --gradient_accumulation_steps 2 \
+    --per_device_train_batch_size 16 \
+    --gradient_accumulation_steps 4 \
     --dataloader_num_workers 8 \
     --max_steps 100 \
     --evaluation_strategy no \
