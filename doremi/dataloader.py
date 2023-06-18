@@ -13,12 +13,16 @@ from datasets.info import DatasetInfo
 from datasets.iterable_dataset import ExamplesIterable, RandomlyCyclingMultiSourcesExamplesIterable
 from transformers import AutoTokenizer, default_data_collator
 import torch.distributed as dist
+from omegaconf import OmegaConf as om
 from tqdm import tqdm
 import math
 from datasets.filesystems import _reset_fsspec_lock
 from datasets.utils.logging import get_logger
 from datasets import load_from_disk
 import shutil
+import transformers
+from llmfoundry.data.text_data import StreamingTextDataset, ConcatenatedSequenceCollatorWrapper
+from streaming import Stream
 
 logger = get_logger(__name__)
 
@@ -196,55 +200,101 @@ def get_perdomain_sharded_datasets(preprocessed_dir,
     return all_ds_shards
 
 
-# def get_preprocessed_mixed_dataset(preprocessed_dir,
-#                                    domain_weights_dict,
-#                                    dataset_name='pile',
-#                                    cache_dir=None,
-#                                    split='train',
-#                                    sharded=True,
-#                                    seed=None,
-#                                    max_samples=None,
-#                                    add_domain_id=False,
-#                                    tmp_file=None,
-#                                    tokenizer=None):
-#     '''preprocessed_dir: has the following format
-#                first level: domain directories
-#                second level: shards for each domain. number of shards per domain should be the same.
+def get_preprocessed_mixed_dataset(
+    split,
+    tokenizer,
+    device_batch_size: int,
+):
 
-#        domain_weights_dict: dict from domain name to weight
-#     '''
+    cfg = {
+        "streams":
+        [{
+            "remote":
+            f"oci://mosaicml-internal-doremi/pile/pre-concat/gpt-neox-20b-seqlen-2048/data-sources/baseline-100K-samples/domain-{domain_idx}",
+            "local": f"/tmp/streaming/domains/domain-{domain_idx}",
+            "split": split,
+        } for domain_idx in range(22)
+         ],  # Skip proportion for now since fixing to be baseline dataset like they do
+        "shuffle":
+        True,
+        "shuffle_seed":
+        17,
+        "eos_token_id":
+        0,
+        "max_seq_len":
+        2048
+    }  # Hard setting to seed 17 for now
+    cfg = om.create(cfg)
+
+    # build streams
+    streams_dict = cfg.get('streams', None)
+    streams = None
+    if streams_dict is not None:
+        streams = []
+        for stream in streams_dict:
+            streams.append(
+                Stream(
+                    remote=stream.get('remote', None)
+                    or cfg.get('remote', None),
+                    local=stream.get('local', None) or cfg.get('local', None),
+                    split=stream.get('split', None) or cfg.get('split', None),
+                    proportion=stream.get('proportion', None),
+                    repeat=stream.get('repeat', None),
+                    samples=stream.get('samples', None),
+                    download_retry=stream.get('download_retry', None)
+                    or cfg.get('download_retry', 2),
+                    download_timeout=stream.get('download_timeout', None)
+                    or cfg.get('download_timeout', 60),
+                    validate_hash=stream.get('validate_hash', None)
+                    or cfg.get('validate_hash', None),
+                    keep_zip=stream.get('keep_zip', None)
+                    or cfg.get('keep_zip', False),
+                    keep_raw=stream.get('keep_raw', None)
+                    or cfg.get('keep_raw', True),
+                ))
+
+    # build dataset potentially with streams
+    dataset = StreamingTextDataset(
+        tokenizer=tokenizer,
+        max_seq_len=cfg.max_seq_len,
+        streams=streams,
+        remote=cfg.get('remote', None),
+        local=cfg.get('local', None),
+        split=cfg.get('split', None),
+        download_retry=cfg.get('download_retry', 2),
+        download_timeout=cfg.get('download_timeout', 60),
+        validate_hash=cfg.get('validate_hash', None),
+        keep_zip=cfg.get('keep_zip', False),
+        keep_raw=cfg.get('keep_raw', True),
+        samples_per_epoch=cfg.get('samples_per_epoch', None),
+        predownload=cfg.get('predownload', 100_000),
+        partition_algo=cfg.get('partition_algo', 'orig'),
+        num_canonical_nodes=cfg.get('num_canonical_nodes', 128),
+        batch_size=device_batch_size,
+        shuffle=cfg.get('shuffle', False),
+        shuffle_algo=cfg.get('shuffle_algo', 'py1b'),
+        shuffle_seed=cfg.get('shuffle_seed', 9176),
+        shuffle_block_size=cfg.get('shuffle_block_size', 1 << 18),
+    )
+
+    return dataset
 
 
-def get_data_collator(tokenizer, return_tensors='pt', do_padding=False):
+def get_data_collator(tokenizer,
+                      eos_token_id,
+                      return_tensors='pt',
+                      do_padding=False):
 
-    def data_collator(features):
-        if not do_padding:
-            batch = {
-                k: torch.tensor([f[k] for f in features])
-                for k in features[0].keys()
-            }
-        else:
-            batch = tokenizer.pad(
-                features,
-                return_tensors=return_tensors,
-                pad_to_multiple_of=tokenizer.model_max_length)
-        batch['attention_mask'] = batch['attention_mask'].long()
-        batch['input_ids'] = batch['input_ids'].long()
+    collate_fn = transformers.DataCollatorForLanguageModeling(
+        tokenizer=tokenizer, mlm=False, mlm_probability=None)
 
-        batch.pop("special_tokens_mask", None)
-        if 'labels' not in batch:
-            labels = batch['input_ids'].clone()
-            batch["labels"] = labels
+    eos_token_id = 0  # Hard set because using neo-x tokenizer
+    bos_token_id = None
+    collate_fn = ConcatenatedSequenceCollatorWrapper(base_collator=collate_fn,
+                                                     eos_token_id=eos_token_id,
+                                                     bos_token_id=bos_token_id)
 
-        if tokenizer.pad_token_id is not None:
-            batch['labels'][batch['labels'] == tokenizer.pad_token_id] = -100
-
-        if 'domain_ids' not in batch and 'domain_id' in batch:
-            batch['domain_ids'] = batch['domain_id']  # compat
-            batch.pop('domain_id')
-        return batch
-
-    return data_collator
+    return collate_fn
 
 
 if __name__ == "__main__":

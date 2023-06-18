@@ -236,12 +236,89 @@ class ConcatenatedSequenceCollatorWrapper:
         left_zeros = cumulative_sep.new_zeros((cumulative_sep.shape[0], 1))
         return torch.cat([left_zeros, cumulative_sep[:, :-1]], dim=1)
 
-
 def build_text_dataloader(
     cfg: DictConfig,
     tokenizer: Tokenizer,
     device_batch_size: int,
 ):
+    assert cfg.name == 'text', f'Tried to build text dataloader with cfg.name={cfg.name}'
+    if cfg.dataset.get('group_method', None) is not None:
+        raise NotImplementedError(
+            'group_method is deprecated and has been removed.\nTo ' +
+            'concatenate, use the --concat_tokens ' +
+            'argument when creating your MDS dataset with convert_dataset_hf.py'
+        )
+
+    # build streams
+    streams_dict = cfg.dataset.get('streams', None)
+    streams = None
+    if streams_dict is not None:
+        streams = []
+        for _, stream in streams_dict.items():
+            streams.append(
+                Stream(
+                    remote=stream.get('remote', None) or
+                    cfg.dataset.get('remote', None),
+                    local=stream.get('local', None) or
+                    cfg.dataset.get('local', None),
+                    split=stream.get('split', None) or
+                    cfg.dataset.get('split', None),
+                    proportion=stream.get('proportion', None),
+                    repeat=stream.get('repeat', None),
+                    samples=stream.get('samples', None),
+                    download_retry=stream.get('download_retry', None) or
+                    cfg.dataset.get('download_retry', 2),
+                    download_timeout=stream.get('download_timeout', None) or
+                    cfg.dataset.get('download_timeout', 60),
+                    validate_hash=stream.get('validate_hash', None) or
+                    cfg.dataset.get('validate_hash', None),
+                    keep_zip=stream.get('keep_zip', None) or
+                    cfg.dataset.get('keep_zip', False),
+                    keep_raw=stream.get('keep_raw', None) or
+                    cfg.dataset.get('keep_raw', True),
+                ))
+
+    # build dataset potentially with streams
+    dataset = StreamingTextDataset(
+        tokenizer=tokenizer,
+        max_seq_len=cfg.dataset.max_seq_len,
+        streams=streams,
+        remote=cfg.dataset.get('remote', None),
+        local=cfg.dataset.get('local', None),
+        split=cfg.dataset.get('split', None),
+        download_retry=cfg.dataset.get('download_retry', 2),
+        download_timeout=cfg.dataset.get('download_timeout', 60),
+        validate_hash=cfg.dataset.get('validate_hash', None),
+        keep_zip=cfg.dataset.get('keep_zip', False),
+        keep_raw=cfg.dataset.get('keep_raw', True),
+        samples_per_epoch=cfg.dataset.get('samples_per_epoch', None),
+        predownload=cfg.dataset.get('predownload', 100_000),
+        partition_algo=cfg.dataset.get('partition_algo', 'orig'),
+        num_canonical_nodes=cfg.dataset.get('num_canonical_nodes', 128),
+        batch_size=device_batch_size,
+        shuffle=cfg.dataset.get('shuffle', False),
+        shuffle_algo=cfg.dataset.get('shuffle_algo', 'py1b'),
+        shuffle_seed=cfg.dataset.get('shuffle_seed', 9176),
+        shuffle_block_size=cfg.dataset.get('shuffle_block_size', 1 << 18),
+    )
+
+    return dataset
+
+def build_text_dataloader(
+    cfg: dict,
+    split: str,
+    tokenizer: Tokenizer,
+    device_batch_size: int,
+):
+    streams = [{
+        "remote":
+        f"oci://mosaicml-internal-doremi/pile/gpt-neox-20b-seqlen-2048/data-sources/domain-0/baseline-100K-samples/domain-{domain_idx}",
+        "local": f"/tmp/streaming/domains/domain-{domain_idx}",
+        "split": split,
+        "proportion": 1 / 22, # Hard set for now
+        ""
+    } for domain_idx in range(22)]  #Hard coding domains for now
+
     assert cfg.name == 'text', f'Tried to build text dataloader with cfg.name={cfg.name}'
     if cfg.dataset.get('group_method', None) is not None:
         raise NotImplementedError(

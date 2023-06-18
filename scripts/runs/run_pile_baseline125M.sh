@@ -7,7 +7,7 @@
 
 # load global parameters
 source constants.sh
-pip install -e .
+# pip install --use-pep51 -e .
 
 mkdir -p $CACHE
 export HF_HOME=$CACHE
@@ -26,45 +26,47 @@ if [ ! -d "${PREPROCESSED_CACHE}" ]; then
     cp -r ${PREPROCESSED_DATA} ${PREPROCESSED_CACHE}
 fi
 
+# SET DEVICE TO BE 32 and GRAD ACCUM TO BE 2
+# USING ADAFACTOR BUT FOUNDRY USES LION
+# CHANGE NUM PROCESSES TO BE 8
 
 NAME=pile_baseline_280M
 accelerate launch \
     --config_file accelerate_config.yml \
-    --num_processes 8 \
+    --num_processes 2 \
     --multi_gpu \
     --num_machines 1 \
     --main_process_port 60200 \
     doremi/train.py \
     --dataset_name pile \
-    --model_type gpt_flash \
-    --tokenizer_name gpt2 \
+    --tokenizer_name EleutherAI/gpt-neox-20b \
     --do_train \
     --cache_dir ${CACHE} \
     --dataset_dir ${PREPROCESSED_CACHE} \
-    --domain_config_path configs/pile_baseline_50kvocab.json \
+    --domain_config_path configs/mpt_pile_baseline_50kvocab.json \
     --output_dir ${MODEL_OUTPUT_DIR}/${NAME} \
     --max_token_length 2048 \
     --per_device_train_batch_size 32 \
-    --gradient_accumulation_steps 1 \
-    --dataloader_num_workers 1 \
+    --gradient_accumulation_steps 2 \
+    --dataloader_num_workers 8 \
     --max_steps 100000 \
     --evaluation_strategy no \
     --save_strategy steps \
-    --save_steps 10000 \
-    --learning_rate 1e-3 \
-    --lr_end 1e-4 \
-    --weight_decay 0.01 \
+    --save_steps 5000 \
+    --learning_rate 2.0e-4 \
+    --lr_end 0 \
+    --weight_decay 0.0006 \
     --max_grad_norm 1.0 \
     --adam_epsilon 1e-8 \
     --lr_scheduler_name linear_warmup_cosine \
     --warmup_ratio 0.06 \
     --run_name ${NAME} \
-    --seed 1111 \
+    --seed 17 \
     --logging_strategy steps \
     --logging_steps 100 \
     --logging_first_step \
     --report_to wandb \
     --optim adafactor \
     --adam_beta1 0.9 \
-    --adam_beta2 0.99 \
+    --adam_beta2 0.95 \
     --bf16 \
