@@ -163,5 +163,5 @@ cython_debug/
 wandb/
 logs/
 *__pycache__/
-constants.sh
-flash-attention
+# constants.sh
+# flash-attention
