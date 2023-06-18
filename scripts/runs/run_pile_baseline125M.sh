@@ -49,10 +49,10 @@ accelerate launch \
     --per_device_train_batch_size 16 \
     --gradient_accumulation_steps 4 \
     --dataloader_num_workers 8 \
-    --max_steps 100 \
+    --max_steps 100000 \
     --evaluation_strategy no \
     --save_strategy steps \
-    --save_steps 50 \
+    --save_steps 5000 \
     --learning_rate 2.0e-4 \
     --lr_end 0 \
     --weight_decay 0.0006 \
