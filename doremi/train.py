@@ -69,7 +69,7 @@ from llmfoundry.models.utils import init_empty_weights
 
 import doremi.dataloader as data_utils
 from doremi.trainer import DoReMiTrainer
-from doremi.models import MPTModel
+from doremi.models import MPTModel, load_pretrained_mpt
 try:
     from flash_attn.models.gpt_neox import gpt_neox_config_to_gpt2_config
 except Exception:
@@ -449,25 +449,10 @@ def main():
 
     # TODO: NEED TO FIX THE LOADING OF DOMAIN WEIGHTS
     if training_args.reweight_domains:
-        torch_dtype = (model_args.torch_dtype if model_args.torch_dtype in [
-            "auto", None
-        ] else getattr(torch, model_args.torch_dtype))
-        if model_args.model_type in {'gpt_flash', 'gpt_neox_flash'}:
-            model_cls = doremi_models.GPTFlashAttnLMHeadModel
-            reference_model = model_cls.from_pretrained(
-                training_args.reference_model_name_or_path, config=config)
-        else:
-            model_cls = AutoModelForCausalLM
+        model_cls = MPTModel
 
-            reference_model = model_cls.from_pretrained(
-                training_args.reference_model_name_or_path,
-                from_tf=bool(".ckpt" in model_args.model_name_or_path),
-                config=config,
-                cache_dir=model_args.cache_dir,
-                revision=model_args.model_revision,
-                use_auth_token=True if model_args.use_auth_token else None,
-                torch_dtype=torch_dtype,
-            )
+        reference_model = load_pretrained_mpt(
+            training_args.reference_model_name_or_path, tokenizer=tokenizer)
         for param in reference_model.parameters():
             param.requires_grad = False
         reference_model.eval()

@@ -1,4 +1,6 @@
 from typing import Optional, Tuple, Union
+import contextlib
+from omegaconf import OmegaConf as om
 from dataclasses import dataclass
 import torch
 from torch import nn
@@ -14,7 +16,7 @@ try:
 except Exception:
     from torch.nn import CrossEntropyLoss
 
-from llmfoundry.models.mpt import ComposerMPTCausalLM
+from llmfoundry.models.mpt import ComposerMPTCausalLM, MPTPreTrainedModel
 
 import logging
 
@@ -24,9 +26,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CausalLMOutputWithDomainIDs(CausalLMOutputWithCrossAttentions):
     domain_ids: Optional[torch.LongTensor] = None
-    reference_pertoken_loss: Optional[torch.FloatTensor] = None  # corresponds to uniq_domain_ids
-    pertoken_loss: Optional[torch.FloatTensor] = None  # corresponds to uniq_domain_ids
-    token_mask: Optional[torch.BoolTensor] = None  # 1 for tokens that are not padding
+    reference_pertoken_loss: Optional[
+        torch.FloatTensor] = None  # corresponds to uniq_domain_ids
+    pertoken_loss: Optional[
+        torch.FloatTensor] = None  # corresponds to uniq_domain_ids
+    token_mask: Optional[
+        torch.BoolTensor] = None  # 1 for tokens that are not padding
 
 
 # class GPTFlashAttnLMHeadModel(GPTLMHeadModelFlash):
@@ -113,7 +118,7 @@ class CausalLMOutputWithDomainIDs(CausalLMOutputWithCrossAttentions):
 #                     reference_pertoken_loss = reference_outputs['pertoken_loss']
 
 #             if not return_dict:
-#                 output = (lm_logits, None, None, None, domain_ids, pertoken_loss, reference_pertoken_loss, token_mask) 
+#                 output = (lm_logits, None, None, None, domain_ids, pertoken_loss, reference_pertoken_loss, token_mask)
 #                 return ((loss,) + output) if loss is not None else output
 
 #             return CausalLMOutputWithDomainIDs(
@@ -157,11 +162,13 @@ class CausalLMOutputWithDomainIDs(CausalLMOutputWithCrossAttentions):
 #         logger.info(load_return)
 #         return model
 
+
 class MPTModel(ComposerMPTCausalLM):
 
     def __init__(self, config, tokenizer):
         super().__init__(config, tokenizer)
-        self.pertoken_loss_fn = CrossEntropyLoss(reduction='mean', ignore_index=-100)
+        self.pertoken_loss_fn = CrossEntropyLoss(reduction='mean',
+                                                 ignore_index=-100)
 
     def forward(
         self,
@@ -195,15 +202,15 @@ class MPTModel(ComposerMPTCausalLM):
             shift_logits = lm_logits[:, :-1, :].contiguous()
             shift_labels = labels[:, 1:].contiguous()
             # Flatten the tokens
-            loss = self.loss_fn(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            loss = self.loss_fn(shift_logits.view(-1, shift_logits.size(-1)),
+                                shift_labels.view(-1))
 
-            return CausalLMOutputWithDomainIDs(
-                loss=loss,
-                logits=lm_logits,
-                past_key_values=None,
-                hidden_states=None,
-                attentions=None,
-                domain_ids=domain_idx)
+            return CausalLMOutputWithDomainIDs(loss=loss,
+                                               logits=lm_logits,
+                                               past_key_values=None,
+                                               hidden_states=None,
+                                               attentions=None,
+                                               domain_ids=domain_idx)
         else:
             return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -220,8 +227,11 @@ class MPTModel(ComposerMPTCausalLM):
                 shift_labels = labels[:, 1:].contiguous()
                 # Flatten the tokens
                 ignore_index = -100
-                pertoken_loss = self.pertoken_loss_fn(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-                pertoken_loss = pertoken_loss.view(shift_labels.size(0), shift_labels.size(1))
+                pertoken_loss = self.pertoken_loss_fn(
+                    shift_logits.view(-1, shift_logits.size(-1)),
+                    shift_labels.view(-1))
+                pertoken_loss = pertoken_loss.view(shift_labels.size(0),
+                                                   shift_labels.size(1))
                 token_mask = shift_labels.ne(ignore_index).float()
 
                 loss = pertoken_loss.sum() / token_mask.sum()
@@ -243,11 +253,13 @@ class MPTModel(ComposerMPTCausalLM):
                         domain_ids=domain_idx,
                         return_pertoken_losses=True,
                     )
-                    reference_pertoken_loss = reference_outputs['pertoken_loss']
+                    reference_pertoken_loss = reference_outputs[
+                        'pertoken_loss']
 
             if not return_dict:
-                output = (lm_logits, None, None, None, domain_idx, pertoken_loss, reference_pertoken_loss, token_mask) 
-                return ((loss,) + output) if loss is not None else output
+                output = (lm_logits, None, None, None, domain_idx,
+                          pertoken_loss, reference_pertoken_loss, token_mask)
+                return ((loss, ) + output) if loss is not None else output
 
             return CausalLMOutputWithDomainIDs(
                 loss=loss,
@@ -259,3 +271,29 @@ class MPTModel(ComposerMPTCausalLM):
                 pertoken_loss=pertoken_loss,
                 reference_pertoken_loss=reference_pertoken_loss,
                 token_mask=token_mask)
+
+
+def load_pretrained_mpt(model_ckpt, tokenizer):
+    init_context = contextlib.nullcontext()
+    with init_context:
+        model_cfg = om.create({
+            "name": "mpt_causal_lm",
+            # "init_device": "meta",
+            "d_model": 768,
+            "n_heads": 12,
+            "n_layers": 12,
+            "expansion_ratio": 4,
+            "max_seq_len": 2048,
+            "vocab_size": 50432,
+            "no_bias": True,
+            "loss_fn": "torch_crossentropy",
+            "attn_config": {
+                "alibi": True,
+                "attn_impl": "triton",
+                "clip_qkv": 6,
+                "attn_uses_sequence_id": True
+            }
+        })
+        model = MPTModel(model_cfg, tokenizer)
+        model.load_state_dict(torch.load(model_ckpt))
+    return model
