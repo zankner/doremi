@@ -396,7 +396,7 @@ def get_preprocessed_mixed_dataset(split,
     if streams_dict is not None:
         streams = []
         for stream in streams_dict:
-            streams.append(**stream)
+            streams.append(Stream(**stream))
             #streams.append(
             #    Stream(
             #        remote=stream.get('remote', None)
