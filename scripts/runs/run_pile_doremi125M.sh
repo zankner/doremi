@@ -15,6 +15,7 @@ export HF_DATASETS_IN_MEMORY_MAX_SIZE=0
 export TORCH_EXTENSIONS_DIR=$CACHE
 export TMPDIR=$CACHE
 export WANDB_DIR=${CACHE}/wandb
+export WANDB_PROJECT=official-doremi
 
 
 PREPROCESSED_DATA=${PREPROCESSED_PILE_DIR}
@@ -27,11 +28,11 @@ fi
 
 # Change num processes to 8, change train batch size
 
-NAME=pile_doremi_1250M
+NAME=pile_doremi_125M
 accelerate launch \
     --config_file accelerate_config.yml \
     --multi_gpu \
-    --num_processes 2 \
+    --num_processes 8 \
     --num_machines 1 \
     --main_process_port 60600 \
     doremi/train.py \
@@ -43,14 +44,14 @@ accelerate launch \
     --dataset_dir ${PREPROCESSED_CACHE} \
     --domain_config_path configs/mpt_pile_uniform_50kvocab.json \
     --output_dir ${MODEL_OUTPUT_DIR}/${NAME} \
-    --max_token_length 1024 \
-    --per_device_train_batch_size 8 \
-    --gradient_accumulation_steps 1 \
-    --dataloader_num_workers 1 \
+    --max_token_length 2048 \
+    --per_device_train_batch_size 2 \
+    --gradient_accumulation_steps 32 \
+    --dataloader_num_workers 8 \
     --max_steps 100000 \
     --evaluation_strategy no \
     --save_strategy steps \
-    --save_steps 50 \
+    --save_steps 5000 \
     --learning_rate 2.0e-4 \
     --lr_end 0 \
     --weight_decay 0.0006 \

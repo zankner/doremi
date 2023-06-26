@@ -201,6 +201,7 @@ def get_perdomain_sharded_datasets(preprocessed_dir,
         all_ds_shards[0][domain] = ds
     return all_ds_shards
 
+
 PILE_DATA_SOURCES = [
     "Pile-CC", "PubMed Central", "Books3", "OpenWebText2", "ArXiv", "Github",
     "FreeLaw", "StackExchange", "USPTO Backgrounds", "PubMed Abstracts",
@@ -208,6 +209,7 @@ PILE_DATA_SOURCES = [
     "Ubuntu IRC", "BookCorpus2", "EuroParl", "HackerNews", "YoutubeSubtitles",
     "PhilPapers", "NIH ExPorter", "Enron Emails"
 ]
+
 
 class StreamingTextDataset(StreamingDataset):
     """Generic text dataset using MosaicML's StreamingDataset.
@@ -258,7 +260,7 @@ class StreamingTextDataset(StreamingDataset):
     def __init__(self,
                  tokenizer,
                  max_seq_len: int,
-                 streams = None,
+                 streams=None,
                  remote: Optional[str] = None,
                  local: Optional[str] = None,
                  split: Optional[str] = None,
@@ -361,12 +363,11 @@ class StreamingTextDataset(StreamingDataset):
             )
         return token_sample
 
-def get_preprocessed_mixed_dataset(
-    split,
-    tokenizer,
-    device_batch_size: int,
-    uniform=False
-):
+
+def get_preprocessed_mixed_dataset(split,
+                                   tokenizer,
+                                   device_batch_size: int,
+                                   uniform=False):
 
     cfg = {
         "streams":
@@ -403,7 +404,6 @@ def get_preprocessed_mixed_dataset(
                     split=stream.get('split', None) or cfg.get('split', None),
                     proportion=stream.get('proportion', None),
                     repeat=stream.get('repeat', None),
-                    samples=stream.get('samples', None),
                     download_retry=stream.get('download_retry', None)
                     or cfg.get('download_retry', 2),
                     download_timeout=stream.get('download_timeout', None)
@@ -482,8 +482,7 @@ class ConcatenatedSequenceCollatorWrapper:
                 [example["domain_idx"] for example in examples])
         return batch
 
-    def get_sequence_id_from_batch(
-            self, batch) -> torch.Tensor:
+    def get_sequence_id_from_batch(self, batch) -> torch.Tensor:
         is_separator = torch.eq(batch['input_ids'],
                                 self.split_token_id)  # type: ignore
         cumulative_sep = torch.cumsum(is_separator,
