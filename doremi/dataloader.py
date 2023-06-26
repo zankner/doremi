@@ -365,6 +365,7 @@ def get_preprocessed_mixed_dataset(
     split,
     tokenizer,
     device_batch_size: int,
+    uniform=False
 ):
 
     cfg = {
@@ -374,6 +375,7 @@ def get_preprocessed_mixed_dataset(
             f"oci://mosaicml-internal-doremi/pile/pre-concat/gpt-neox-20b-seqlen-2048/data-sources/baseline-100K-samples/domain-{domain_idx}",
             "local": f"/tmp/streaming/domains/domain-{domain_idx}",
             "split": split,
+            "proportion": (1 / 22) if uniform else None
         } for domain_idx in range(22)
          ],  # Skip proportion for now since fixing to be baseline dataset like they do
         "shuffle":

@@ -407,7 +407,9 @@ def main():
         train_dataset = data_utils.get_preprocessed_mixed_dataset(
             split='train',
             tokenizer=tokenizer,
-            device_batch_size=training_args.per_device_train_batch_size)
+            device_batch_size=training_args.per_device_train_batch_size,
+            uniform=bool(training_args.reweight_domains)
+            )
 
     if training_args.do_eval:
         eval_dataset = data_utils.get_preprocessed_mixed_dataset(
