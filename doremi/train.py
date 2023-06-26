@@ -398,7 +398,8 @@ def main():
     train_domain_weights_dict = domain_config['train_domain_weights']
     eval_domain_weights_dict = domain_config['eval_domain_weights']
     # whenever we convert dict to array, we sort by key
-    domain_list = list(sorted(train_domain_weights_dict.keys()))
+    # Got rid of sorting to preserve original order
+    domain_list = list(train_domain_weights_dict.keys())
     num_domains = len(domain_list)
 
     if training_args.do_train:
