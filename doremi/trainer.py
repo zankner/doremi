@@ -296,9 +296,9 @@ class DoReMiTrainer(Trainer):
                     gathered_token_mask = torch.cat(gathered_token_mask, dim=0)
 
                     gathered_domain_id = [
-                            torch.zeros_like(inputs['domain_ids']) for _ in range(self.args.world_size)
+                            torch.zeros_like(inputs['domain_idx']) for _ in range(self.args.world_size)
                             ]
-                    dist.gather(inputs['domain_ids'], gathered_domain_id, dst=0)
+                    dist.gather(inputs['domain_idx'], gathered_domain_id, dst=0)
                     gathered_domain_id = torch.cat(gathered_domain_id, dim=0)
 
                     self.pertoken_scores.append(gathered_excess_losses.detach())
@@ -319,12 +319,12 @@ class DoReMiTrainer(Trainer):
             else:
                 dist.gather(excess_loss, dst=0)
                 dist.gather(token_mask, dst=0)
-                dist.gather(inputs['domain_ids'], dst=0)
+                dist.gather(inputs['domain_idx'], dst=0)
 
             if self.args.doremi_optimizer == 'doremiv1':
                 # compute the rescaled loss, divide by domain weights
                 train_domain_weights = self.read_weights().to(pertoken_loss.device)
-                curr_domain_weights = train_domain_weights[inputs['domain_ids']].unsqueeze(-1).expand_as(pertoken_loss).detach()
+                curr_domain_weights = train_domain_weights[inputs['domain_idx']].unsqueeze(-1).expand_as(pertoken_loss).detach()
                 token_mask = token_mask.detach().type(pertoken_loss.dtype)
                 curr_domain_weights = curr_domain_weights * token_mask
                 curr_domain_weights = curr_domain_weights / curr_domain_weights.sum()

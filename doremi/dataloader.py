@@ -1,5 +1,6 @@
 from pathlib import Path
 import pickle
+from typing import Optional, Mapping
 from copy import deepcopy
 from multiprocessing import Array
 from itertools import cycle, chain
@@ -21,8 +22,9 @@ from datasets.utils.logging import get_logger
 from datasets import load_from_disk
 import shutil
 import transformers
-from llmfoundry.data.text_data import StreamingTextDataset, ConcatenatedSequenceCollatorWrapper
+from llmfoundry.data.text_data import StreamingDataset
 from streaming import Stream
+import os
 
 logger = get_logger(__name__)
 
@@ -199,6 +201,165 @@ def get_perdomain_sharded_datasets(preprocessed_dir,
         all_ds_shards[0][domain] = ds
     return all_ds_shards
 
+PILE_DATA_SOURCES = [
+    "Pile-CC", "PubMed Central", "Books3", "OpenWebText2", "ArXiv", "Github",
+    "FreeLaw", "StackExchange", "USPTO Backgrounds", "PubMed Abstracts",
+    "Gutenberg (PG-19)", "OpenSubtitles", "Wikipedia (en)", "DM Mathematics",
+    "Ubuntu IRC", "BookCorpus2", "EuroParl", "HackerNews", "YoutubeSubtitles",
+    "PhilPapers", "NIH ExPorter", "Enron Emails"
+]
+
+class StreamingTextDataset(StreamingDataset):
+    """Generic text dataset using MosaicML's StreamingDataset.
+
+    Args:
+        tokenizer (Tokenizer): HuggingFace tokenizer to
+            tokenize samples.
+        max_seq_len (int): The max sequence length of each sample.
+        streams (Sequence[Stream], optional): One or more Streams to stream/cache samples from,
+            which may be upsampled or downsampled. StreamingDataset uses either ``streams`` or
+            ``remote``/``local``. Defaults to ``None``.
+        remote (str, optional): Remote path or directory to download the dataset from. If ``None``,
+            its data must exist locally. StreamingDataset uses either ``streams`` or
+            ``remote``/``local``. Defaults to ``None``.
+        local (str, optional): Local working directory to download shards to. This is where shards
+            are cached while they are being used. Uses a temp directory if not set.
+            StreamingDataset uses either ``streams`` or ``remote``/``local``. Defaults to ``None``.
+        split (str, optional): Which dataset split to use, if any. If provided, we stream from/to
+            the ``split`` subdirs of  ``remote`` and ``local``. Defaults to ``None``.
+        download_retry (int): Number of download re-attempts before giving up. Defaults to ``2``.
+        download_timeout (float): Number of seconds to wait for a shard to download before raising
+            an exception. Defaults to ``60``.
+        validate_hash (str, optional): Optional hash or checksum algorithm to use to validate
+            shards. Defaults to ``None``.
+        keep_zip (bool): Whether to keep or delete the compressed form when decompressing
+            downloaded shards. If ``False``, keep iff remote is local or no remote. Defaults to
+            `False``.
+        keep_raw (bool): Whether to keep or delete the decompressed form (or only form)
+            of shards after all their samples have been yielded this epoch. If ``False``, keep iff
+            remote is local or no remote and no compression. Defaults to ``True``.
+        samples_per_epoch (int, optional): Provide this field iff you are weighting sub-datasets
+            proportionally. Defaults to ``None``.
+        predownload (int, optional): Target number of samples ahead to download the shards of while
+            iterating. Defaults to ``100_000``.
+        partition_algo (str): Which partitioning algorithm to use. Defaults to ``orig``.
+        num_canonical_nodes (int, optional): Canonical number of nodes for shuffling with
+            resumption. Defaults to ``None``, which is interpreted as the number of nodes of the
+            initial run.
+        batch_size (int, optional): Batch size of its DataLoader, which affects how the dataset is
+            partitioned over the workers. Defaults to ``None``.
+        shuffle (bool): Whether to iterate over the samples in randomized order. Defaults to
+            ``False``.
+        shuffle_algo (str): Which shuffling algorithm to use. Defaults to ``py1b``.
+        shuffle_seed (int): Seed for Deterministic data shuffling. Defaults to ``9176``.
+        shuffle_block_size (int): Unit of shuffle. Defaults to ``1 << 18``.
+    """
+
+    def __init__(self,
+                 tokenizer,
+                 max_seq_len: int,
+                 streams = None,
+                 remote: Optional[str] = None,
+                 local: Optional[str] = None,
+                 split: Optional[str] = None,
+                 download_retry: int = 2,
+                 download_timeout: float = 60,
+                 validate_hash: Optional[str] = None,
+                 keep_zip: bool = False,
+                 keep_raw: bool = True,
+                 samples_per_epoch: Optional[int] = None,
+                 predownload: int = 100_000,
+                 partition_algo: str = 'orig',
+                 num_canonical_nodes: Optional[int] = None,
+                 batch_size: Optional[int] = None,
+                 shuffle: bool = False,
+                 shuffle_algo: str = 'py1b',
+                 shuffle_seed: int = 9176,
+                 shuffle_block_size: int = 1 << 18,
+                 **kwargs):
+
+        group_method = kwargs.pop('group_method', None)
+        if group_method is not None:
+            raise NotImplementedError(
+                'group_method is deprecated and has been removed.\nTo ' +
+                'concatenate, use the --concat_tokens ' +
+                'argument when creating your MDS dataset with concat_c4.py')
+
+        if kwargs is not None and len(kwargs) > 0:
+            raise ValueError(
+                f'StreamingTextDataset() got an unexpected keyword argument: {kwargs}'
+            )
+
+        if local is not None and (remote is None or (local == remote)):
+            if os.path.isdir(local):
+                contents = set(os.listdir(local))
+                if split not in contents:
+                    raise ValueError(
+                        f'local directory {local} does not contain split {split}'
+                    )
+
+        # Build Dataset
+        super().__init__(
+            streams=streams,
+            remote=remote,
+            local=local,
+            split=split,
+            download_retry=download_retry,
+            download_timeout=download_timeout,
+            validate_hash=validate_hash,
+            keep_zip=keep_zip,
+            keep_raw=keep_raw,
+            samples_per_epoch=samples_per_epoch,
+            predownload=predownload,
+            partition_algo=partition_algo,
+            num_canonical_nodes=num_canonical_nodes,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            shuffle_algo=shuffle_algo,
+            shuffle_seed=shuffle_seed,
+        )
+        self.tokenizer = tokenizer
+        self.max_seq_len = max_seq_len
+
+    # How to tokenize a text sample to a token sample
+    def _tokenize(self, text_sample):
+        if self.tokenizer._pad_token is None:
+            # Some tokenizers (e.g. GPT2 tokenizer) have no padding token which causes bugs
+            raise RuntimeError(
+                'If tokenizing on-the-fly, tokenizer must have a pad_token_id')
+
+        return self.tokenizer(text_sample['text'],
+                              truncation=True,
+                              padding='max_length',
+                              max_length=self.max_seq_len)
+
+    def _read_binary_tokenized_sample(self, sample):
+        return torch.from_numpy(
+            np.frombuffer(sample['tokens'],
+                          dtype=np.int64)[:self.max_seq_len].copy())
+
+    def _read_binary_reference_losses(self, sample):
+        losses = np.frombuffer(sample['ref_losses'],
+                               dtype=np.float16)[:self.max_seq_len].copy()
+        return torch.from_numpy(losses).type(torch.float32)
+
+    # How to process a sample
+    def __getitem__(self, idx: int):
+        sample = super().__getitem__(idx)
+        if 'text' in sample:
+            token_sample = self._tokenize(sample)
+        elif 'domain_idx' in sample:
+            token_sample = {
+                "tokens": self._read_binary_tokenized_sample(sample),
+                "domain_idx": sample["domain_idx"]
+            }
+        elif 'tokens' in sample:
+            token_sample = self._read_binary_tokenized_sample(sample)
+        else:
+            raise RuntimeError(
+                'StreamingTextDataset needs samples to have a `text` or `tokens` column'
+            )
+        return token_sample
 
 def get_preprocessed_mixed_dataset(
     split,
@@ -278,6 +439,60 @@ def get_preprocessed_mixed_dataset(
     )
 
     return dataset
+
+
+class ConcatenatedSequenceCollatorWrapper:
+    """Collator wrapper to add sequence_id to batch."""
+
+    def __init__(
+        self,
+        base_collator,
+        eos_token_id=None,
+        bos_token_id=None,
+    ):
+        self.base_collator = base_collator
+        if (eos_token_id is None) and (bos_token_id is None):
+            raise ValueError(
+                'Must supply a value for either eos_token_id or bos_token_id, but got None for both.'
+            )
+        if (eos_token_id is not None) and (bos_token_id is not None):
+            raise ValueError(
+                'Cannot use *both* EOS and BOS tokens for detecting sequence boundaries. ' +\
+                'Please supply `eos_token_id` if sequences end with an EOS token, or use ' +\
+                '`bos_token_id` if sequences start with a BOS token.'
+            )
+
+        self.split_token_id = eos_token_id
+        self.bos_mode = False
+        if eos_token_id is None:
+            self.split_token_id = bos_token_id
+            self.bos_mode = True
+
+    def __call__(self, examples):
+        if isinstance(examples[0], Mapping):
+            batch = self.base_collator(
+                [example["tokens"] for example in examples])
+        else:
+            batch = self.base_collator(examples)
+        batch['sequence_id'] = self.get_sequence_id_from_batch(batch)
+        if isinstance(examples[0], Mapping):
+            batch["domain_idx"] = torch.tensor(
+                [example["domain_idx"] for example in examples])
+        return batch
+
+    def get_sequence_id_from_batch(
+            self, batch) -> torch.Tensor:
+        is_separator = torch.eq(batch['input_ids'],
+                                self.split_token_id)  # type: ignore
+        cumulative_sep = torch.cumsum(is_separator,
+                                      dim=1).to(batch['input_ids'].dtype)
+        # If separator token is bos, we're already done
+        if self.bos_mode:
+            return cumulative_sep
+
+        # If separator token is eos, right shift 1 space
+        left_zeros = cumulative_sep.new_zeros((cumulative_sep.shape[0], 1))
+        return torch.cat([left_zeros, cumulative_sep[:, :-1]], dim=1)
 
 
 def get_data_collator(tokenizer,

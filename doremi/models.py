@@ -167,8 +167,9 @@ class MPTModel(ComposerMPTCausalLM):
 
     def __init__(self, config, tokenizer):
         super().__init__(config, tokenizer)
-        self.pertoken_loss_fn = CrossEntropyLoss(reduction='mean',
+        self.pertoken_loss_fn = CrossEntropyLoss(reduction='none',
                                                  ignore_index=-100)
+        self.reference_model = None
 
     def forward(
         self,
@@ -186,7 +187,6 @@ class MPTModel(ComposerMPTCausalLM):
         domain_idx: Optional[torch.LongTensor] = None,
         return_pertoken_losses: Optional[bool] = False,
     ) -> Union[Tuple, CausalLMOutputWithDomainIDs]:
-
         batch = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
@@ -214,7 +214,7 @@ class MPTModel(ComposerMPTCausalLM):
         else:
             return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-            lm_logits = super().forward(input_ids=input_ids).logits
+            lm_logits = super().forward(batch).logits
 
             loss = None
             pertoken_loss = None
@@ -250,7 +250,7 @@ class MPTModel(ComposerMPTCausalLM):
                         output_attentions=output_attentions,
                         output_hidden_states=output_hidden_states,
                         return_dict=return_dict,
-                        domain_ids=domain_idx,
+                        domain_idx=domain_idx,
                         return_pertoken_losses=True,
                     )
                     reference_pertoken_loss = reference_outputs[
