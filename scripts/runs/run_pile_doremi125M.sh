@@ -28,7 +28,7 @@ fi
 
 # Change num processes to 8, change train batch size
 
-NAME=no_seq_pile_doremi_125M
+NAME=same_bs_no_seq_pile_doremi_125M
 accelerate launch \
     --config_file accelerate_config.yml \
     --multi_gpu \
@@ -45,8 +45,8 @@ accelerate launch \
     --domain_config_path configs/mpt_pile_uniform_50kvocab.json \
     --output_dir ${MODEL_OUTPUT_DIR}/${NAME} \
     --max_token_length 2048 \
-    --per_device_train_batch_size 16 \
-    --gradient_accumulation_steps 4 \
+    --per_device_train_batch_size 2 \
+    --gradient_accumulation_steps 32 \
     --dataloader_num_workers 8 \
     --max_steps 100000 \
     --evaluation_strategy no \
