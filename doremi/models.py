@@ -241,24 +241,25 @@ class MPTModel(ComposerMPTCausalLM):
 
                 # run reference model forward to get pertoken_loss
                 if self.reference_model is not None:
-                    #self.reference_model.eval()
-                    #reference_outputs = self.reference_model(
-                    #    input_ids=input_ids,
-                    #    attention_mask=attention_mask,
-                    #    inputs_embeds=inputs_embeds,
-                    #    head_mask=head_mask,
-                    #    past_key_values=past_key_values,
-                    #    labels=labels,
-                    #    use_cache=use_cache,
-                    #    output_attentions=output_attentions,
-                    #    output_hidden_states=output_hidden_states,
-                    #    return_dict=return_dict,
-                    #    domain_idx=domain_idx,
-                    #    return_pertoken_losses=True,
-                    #)
-                    #reference_pertoken_loss = reference_outputs[
-                    #    'pertoken_loss']
-                    reference_pertoken_loss = ref_losses[:, :-1]
+                    self.reference_model.eval()
+                    reference_outputs = self.reference_model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        sequence_id=sequence_id,
+                        inputs_embeds=inputs_embeds,
+                        head_mask=head_mask,
+                        past_key_values=past_key_values,
+                        labels=labels,
+                        use_cache=use_cache,
+                        output_attentions=output_attentions,
+                        output_hidden_states=output_hidden_states,
+                        return_dict=return_dict,
+                        domain_idx=domain_idx,
+                        return_pertoken_losses=True,
+                    )
+                    reference_pertoken_loss = reference_outputs[
+                        'pertoken_loss']
+                    #reference_pertoken_loss = ref_losses[:, :-1]
 
             if not return_dict:
                 output = (lm_logits, None, None, None, domain_idx,
