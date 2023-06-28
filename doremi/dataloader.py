@@ -371,7 +371,7 @@ def get_preprocessed_mixed_dataset(split,
         "streams":
         [{
             "remote":
-            f"oci://mosaicml-internal-doremi/pile/pre-concat/gpt-neox-20b-seqlen-2048/data-sources/baseline-100K-samples/domain-{domain_idx}",
+            f"oci://mosaicml-internal-doremi/pile/token-ref-loss/gpt-neox-20b-seqlen-2048/data-sources/baseline-100K-samples/domain-{domain_idx}",
             "local": f"/tmp/streaming/domains/domain-{domain_idx}",
             "split": split,
             "proportion": (1 / 22) if uniform else None

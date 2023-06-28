@@ -30,7 +30,7 @@ fi
 # USING ADAFACTOR BUT FOUNDRY USES LION
 # Set max steps as 100_000 and save steps as 5_000
 
-NAME=pile_baseline_125M
+NAME=loss_ds_pile_baseline_125M
 accelerate launch \
     --config_file accelerate_config.yml \
     --num_processes 8 \
