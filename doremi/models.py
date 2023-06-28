@@ -245,7 +245,7 @@ class MPTModel(ComposerMPTCausalLM):
                     reference_outputs = self.reference_model(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
-                        sequence_id=sequence_id,
+                        sequence_id=None,
                         inputs_embeds=inputs_embeds,
                         head_mask=head_mask,
                         past_key_values=past_key_values,
