@@ -28,7 +28,7 @@ fi
 
 # Change num processes to 8, change train batch size
 
-NAME=pile_doremi_125M
+NAME=pre_loss_pile_doremi_125M
 accelerate launch \
     --config_file accelerate_config.yml \
     --multi_gpu \
