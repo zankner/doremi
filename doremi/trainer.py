@@ -121,7 +121,7 @@ class DoReMiTrainer(Trainer):
         self.train_domain_weights_dict = self.domain_config['train_domain_weights']
         self.eval_domain_weights_dict = self.domain_config['eval_domain_weights']
 
-        self.domain_list = list(sorted(self.train_domain_weights_dict.keys()))
+        self.domain_list = list(self.train_domain_weights_dict.keys())
 
         self.pertoken_scores = []
         self.token_masks = []
