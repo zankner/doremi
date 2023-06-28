@@ -268,7 +268,6 @@ class StreamingTextDataset(StreamingDataset):
                  download_timeout: float = 60,
                  validate_hash: Optional[str] = None,
                  keep_zip: bool = False,
-                 epoch_size: Optional[int] = None,
                  predownload: int = 100_000,
                  partition_algo: str = 'orig',
                  num_canonical_nodes: Optional[int] = None,
@@ -298,7 +297,6 @@ class StreamingTextDataset(StreamingDataset):
                     raise ValueError(
                         f'local directory {local} does not contain split {split}'
                     )
-
         # Build Dataset
         super().__init__(
             streams=streams,
@@ -309,7 +307,6 @@ class StreamingTextDataset(StreamingDataset):
             download_timeout=download_timeout,
             validate_hash=validate_hash,
             keep_zip=keep_zip,
-            epoch_size=epoch_size,
             predownload=predownload,
             partition_algo=partition_algo,
             num_canonical_nodes=num_canonical_nodes,
@@ -348,6 +345,12 @@ class StreamingTextDataset(StreamingDataset):
         sample = super().__getitem__(idx)
         if 'text' in sample:
             token_sample = self._tokenize(sample)
+        elif 'ref_losses' in sample:
+            token_sample = {
+                "tokens": self._read_binary_tokenized_sample(sample),
+                "ref_losses": self._read_binary_reference_losses(sample),
+                "domain_idx": sample["domain_idx"]
+            }
         elif 'domain_idx' in sample:
             token_sample = {
                 "tokens": self._read_binary_tokenized_sample(sample),
@@ -371,7 +374,7 @@ def get_preprocessed_mixed_dataset(split,
         "streams":
         [{
             "remote":
-            f"oci://mosaicml-internal-doremi/pile/token-ref-loss/gpt-neox-20b-seqlen-2048/data-sources/baseline-100K-samples/domain-{domain_idx}",
+            f"oci://mosaicml-internal-doremi/pile/token-ref-loss/gpt-neox-20b-seqlen-2048/data-sources/125M-baseline-100K-samples/domain-{domain_idx}",
             "local": f"/tmp/streaming/domains/domain-{domain_idx}",
             "split": split,
             "proportion": (1 / 22) if uniform else None
@@ -467,6 +470,9 @@ class ConcatenatedSequenceCollatorWrapper:
         if isinstance(examples[0], Mapping):
             batch["domain_idx"] = torch.tensor(
                 [example["domain_idx"] for example in examples])
+            if "ref_losses" in examples[0]:
+                batch["ref_losses"] = torch.vstack(
+                    [example["ref_losses"] for example in examples])
         return batch
 
     def get_sequence_id_from_batch(self, batch) -> torch.Tensor:
