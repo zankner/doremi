@@ -1,4 +1,4 @@
-run_name: source-code-doremi-125M-baseline
+run_name: replicate-doremi-125M-baseline
 platform: r1z1
 gpu_type: a100_80gb
 gpu_num: 8
@@ -18,4 +18,4 @@ command: |
   pip install oci-cli
   cd doremi
   bash scripts/runs/run_pile_baseline125M.sh
-  oci os object bulk-upload -bn mosaicml-internal-doremi --src-dir /tmp/doremi/models --prefix official-implementation/125M-params/reference/ > /dev/null
+  oci os object bulk-upload --parallel-upload-count 500 -bn mosaicml-internal-doremi --src-dir /tmp/doremi/models --prefix replicate/125M-params/reference/ > /dev/null

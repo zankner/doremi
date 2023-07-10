@@ -17,7 +17,7 @@ export HF_DATASETS_IN_MEMORY_MAX_SIZE=0
 export TORCH_EXTENSIONS_DIR=$CACHE
 export TMPDIR=$CACHE
 export WANDB_DIR=${CACHE}/wandb
-export WANDB_PROJECT=official-doremi
+export WANDB_PROJECT=replicate-doremi
 
 PREPROCESSED_DATA=${PREPROCESSED_PILE_DIR}
 PREPROCESSED_CACHE=${CACHE}/preprocessed_cache/perdomain_pile_preprocessed
@@ -30,7 +30,7 @@ fi
 # USING ADAFACTOR BUT FOUNDRY USES LION
 # Set max steps as 100_000 and save steps as 5_000
 
-NAME=loss_ds_pile_baseline_125M
+NAME=replicate_our_data_pile_baseline_125M
 accelerate launch \
     --config_file accelerate_config.yml \
     --num_processes 8 \
@@ -49,7 +49,7 @@ accelerate launch \
     --per_device_train_batch_size 16 \
     --gradient_accumulation_steps 4 \
     --dataloader_num_workers 8 \
-    --max_steps 100000 \
+    --max_steps 25000 \
     --evaluation_strategy no \
     --save_strategy steps \
     --save_steps 5000 \

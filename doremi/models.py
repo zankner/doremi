@@ -257,9 +257,10 @@ class MPTModel(ComposerMPTCausalLM):
                         domain_idx=domain_idx,
                         return_pertoken_losses=True,
                     )
-                    reference_pertoken_loss = reference_outputs[
-                        'pertoken_loss']
-                    #reference_pertoken_loss = ref_losses[:, :-1]
+                    reference_pertoken_loss = reference_outputs['pertoken_loss']
+                    #reference_pertoken_loss = reference_outputs[
+                    #    'pertoken_loss']
+                    reference_pertoken_loss = ref_losses[:, :-1]
 
             if not return_dict:
                 output = (lm_logits, None, None, None, domain_idx,
