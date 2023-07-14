@@ -71,26 +71,40 @@ try:
 except Exception:
     pass
 
-
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.27.0")
 
-require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
+require_version(
+    "datasets>=1.8.0",
+    "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt"
+)
 
 logger = logging.getLogger(__name__)
+
+PILE_NAMES_ORDERED = [
+    "Pile-CC", "PubMed Central", "Books3", "OpenWebText2", "ArXiv", "Github",
+    "FreeLaw", "StackExchange", "USPTO Backgrounds", "PubMed Abstracts",
+    "Gutenberg (PG-19)", "OpenSubtitles", "Wikipedia (en)", "DM Mathematics",
+    "Ubuntu IRC", "BookCorpus2", "EuroParl", "HackerNews", "YoutubeSubtitles",
+    "PhilPapers", "NIH ExPorter", "Enron Emails"
+]
+
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, FullTrainingArguments))
+    parser = HfArgumentParser(
+        (ModelArguments, DataTrainingArguments, FullTrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
-        model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+        model_args, data_args, training_args = parser.parse_json_file(
+            json_file=os.path.abspath(sys.argv[1]))
     else:
-        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+        model_args, data_args, training_args = parser.parse_args_into_dataclasses(
+        )
 
     # Setup logging
     logging.basicConfig(
@@ -113,26 +127,30 @@ def main():
     # Log on each process the small summary:
     logger.warning(
         f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
-        + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+        +
+        f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
     )
     logger.info(f"Training/evaluation parameters {training_args}")
 
     # Detecting last checkpoint.
     last_checkpoint = None
     num_skip_examples = 0
-    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+    if os.path.isdir(
+            training_args.output_dir
+    ) and training_args.do_train and not training_args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(training_args.output_dir)
-        if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+        if last_checkpoint is None and len(os.listdir(
+                training_args.output_dir)) > 0:
             raise ValueError(
                 f"Output directory ({training_args.output_dir}) already exists and is not empty. "
-                "Use --overwrite_output_dir to overcome."
-            )
+                "Use --overwrite_output_dir to overcome.")
         elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
             logger.info(
                 f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
             )
-            state = TrainerState.load_from_json(str(Path(last_checkpoint) / TRAINER_STATE_NAME))
+            state = TrainerState.load_from_json(
+                str(Path(last_checkpoint) / TRAINER_STATE_NAME))
             global_batch_size = training_args.train_batch_size * training_args.gradient_accumulation_steps * training_args.world_size
             num_skip_examples = state.global_step * global_batch_size
             logger.info(f"Skipping {num_skip_examples} examples")
@@ -152,9 +170,11 @@ def main():
         "use_auth_token": True if model_args.use_auth_token else None,
     }
     if model_args.config_name:
-        config = AutoConfig.from_pretrained(model_args.config_name, **config_kwargs)
+        config = AutoConfig.from_pretrained(model_args.config_name,
+                                            **config_kwargs)
     elif model_args.model_name_or_path:
-        config = AutoConfig.from_pretrained(model_args.model_name_or_path, **config_kwargs)
+        config = AutoConfig.from_pretrained(model_args.model_name_or_path,
+                                            **config_kwargs)
         if model_args.model_type == 'gpt_neox_flash':
             config = gpt_neox_config_to_gpt2_config(config)
             config.use_flash_attn = True
@@ -167,20 +187,24 @@ def main():
             # disable absolute
             config.max_position_embeddings = 0
     else:
-        if model_args.model_type == 'gpt_flash': 
-            config = GPT2Config(
-                    vocab_size=50257, n_positions=2048, n_embd=2048,
-                    n_layer=24, n_head=16, 
-                    scale_attn_by_inverse_layer_idx=True, 
-                    rotary_emb_fraction=0.5,
-                    use_flash_attn=True, fused_mlp=True,
-                    fused_bias_fc=True, fused_dropout_add_ln=True, 
-                    pad_vocab_size_multiple=8)
+        if model_args.model_type == 'gpt_flash':
+            config = GPT2Config(vocab_size=50257,
+                                n_positions=2048,
+                                n_embd=2048,
+                                n_layer=24,
+                                n_head=16,
+                                scale_attn_by_inverse_layer_idx=True,
+                                rotary_emb_fraction=0.5,
+                                use_flash_attn=True,
+                                fused_mlp=True,
+                                fused_bias_fc=True,
+                                fused_dropout_add_ln=True,
+                                pad_vocab_size_multiple=8)
             # disable absolute
             config.max_position_embeddings = 0
         elif model_args.model_type == 'gpt_neox_flash':
             # convert to GPT2 config
-            config = CONFIG_MAPPING['gpt_neox']() 
+            config = CONFIG_MAPPING['gpt_neox']()
             config = gpt_neox_config_to_gpt2_config(config)
             config.use_flash_attn = True
             config.fused_mlp = True
@@ -193,12 +217,12 @@ def main():
             config.max_position_embeddings = 0
         else:
             config = CONFIG_MAPPING[model_args.model_type]()
-        logger.warning("You are instantiating a new config instance from scratch.")
+        logger.warning(
+            "You are instantiating a new config instance from scratch.")
         if model_args.config_overrides is not None:
             logger.info(f"Overriding config: {model_args.config_overrides}")
             config.update_from_string(model_args.config_overrides)
             logger.info(f"New config: {config}")
-
 
     tokenizer_kwargs = {
         "cache_dir": model_args.cache_dir,
@@ -207,9 +231,11 @@ def main():
         "use_auth_token": True if model_args.use_auth_token else None,
     }
     if model_args.tokenizer_name:
-        tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, **tokenizer_kwargs)
+        tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name,
+                                                  **tokenizer_kwargs)
     elif model_args.model_name_or_path:
-        tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, **tokenizer_kwargs)
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_args.model_name_or_path, **tokenizer_kwargs)
     else:
         raise ValueError(
             "You are instantiating a new tokenizer from scratch. This is not supported by this script."
@@ -217,13 +243,12 @@ def main():
         )
 
     if model_args.model_name_or_path:
-        torch_dtype = (
-            model_args.torch_dtype
-            if model_args.torch_dtype in ["auto", None]
-            else getattr(torch, model_args.torch_dtype)
-        )
+        torch_dtype = (model_args.torch_dtype if model_args.torch_dtype in [
+            "auto", None
+        ] else getattr(torch, model_args.torch_dtype))
         if model_args.model_type in {'gpt_flash', 'gpt_neox_flash'}:
-            model = doremi_models.GPTFlashAttnLMHeadModel.from_pretrained(model_args.model_name_or_path, config=config)
+            model = doremi_models.GPTFlashAttnLMHeadModel.from_pretrained(
+                model_args.model_name_or_path, config=config)
         else:
             model = AutoModelForCausalLM.from_pretrained(
                 model_args.model_name_or_path,
@@ -240,8 +265,11 @@ def main():
         else:
             model = AutoModelForCausalLM.from_config(config)
 
-        n_params = sum({p.data_ptr(): p.numel() for p in model.parameters()}.values())
-        logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
+        n_params = sum({p.data_ptr(): p.numel()
+                        for p in model.parameters()}.values())
+        logger.info(
+            f"Training new model from scratch - Total size={n_params/2**20:.2f}M params"
+        )
 
     with open(training_args.domain_config_path, 'r') as f:
         domain_config = json.load(f)
@@ -249,51 +277,34 @@ def main():
     train_domain_weights_dict = domain_config['train_domain_weights']
     eval_domain_weights_dict = domain_config['eval_domain_weights']
     # whenever we convert dict to array, we sort by key
-    domain_list = list(sorted(train_domain_weights_dict.keys()))
-    num_domains = len(domain_list)
+    domain_list = PILE_NAMES_ORDERED
 
     if training_args.do_train:
-        # data script could change tokenizer shape
         train_dataset = data_utils.get_preprocessed_mixed_dataset(
-                preprocessed_dir=data_args.dataset_dir,
-                domain_weights_dict=train_domain_weights_dict,
-                dataset_name=data_args.dataset_name,
-                cache_dir=model_args.cache_dir,
-                split='train',
-                max_samples=data_args.max_train_samples,
-                add_domain_id=data_args.add_domain_id,
-                tmp_file=None,
-                seed=training_args.seed,
-                tokenizer=tokenizer,
-                shuffle=data_args.shuffle,
-                num_skip_examples=num_skip_examples)
+            domain_weights_dict=train_domain_weights_dict,
+            tokenizer=tokenizer,
+            split="train",
+            seed=training_args.seed)
 
     if training_args.do_eval:
+        # Possibly add back in max number of samples from the eval script
         eval_dataset = data_utils.get_preprocessed_mixed_dataset(
-                preprocessed_dir=data_args.dataset_dir,
-                domain_weights_dict=eval_domain_weights_dict,
-                dataset_name=data_args.dataset_name,
-                cache_dir=model_args.cache_dir,
-                split='validation',
-                add_domain_id=data_args.add_domain_id,
-                max_samples=data_args.max_eval_samples,
-                tokenizer=tokenizer,
-                no_interleave=True)
+            domain_weights_dict=eval_domain_weights_dict,
+            tokenizer=tokenizer,
+            split="val",
+        )
 
     if training_args.reweight_domains:
-        torch_dtype = (
-            model_args.torch_dtype
-            if model_args.torch_dtype in ["auto", None]
-            else getattr(torch, model_args.torch_dtype)
-        )
+        torch_dtype = (model_args.torch_dtype if model_args.torch_dtype in [
+            "auto", None
+        ] else getattr(torch, model_args.torch_dtype))
         if model_args.model_type in {'gpt_flash', 'gpt_neox_flash'}:
             model_cls = doremi_models.GPTFlashAttnLMHeadModel
             reference_model = model_cls.from_pretrained(
-                training_args.reference_model_name_or_path,
-                config=config)
+                training_args.reference_model_name_or_path, config=config)
         else:
             model_cls = AutoModelForCausalLM
-            
+
             reference_model = model_cls.from_pretrained(
                 training_args.reference_model_name_or_path,
                 from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -307,10 +318,16 @@ def main():
             param.requires_grad = False
         reference_model.eval()
         model.reference_model = reference_model
-        model.register_buffer('train_domain_weights', torch.tensor(
+        model.register_buffer(
+            'train_domain_weights',
+            torch.tensor(
                 [train_domain_weights_dict[domain] for domain in domain_list]))
-        model.register_buffer('avg_domain_weights', model.train_domain_weights.clone())
-        model.register_buffer('perdomain_scores', torch.ones(len(train_domain_weights_dict)) * np.log(len(tokenizer)))
+        model.register_buffer('avg_domain_weights',
+                              model.train_domain_weights.clone())
+        model.register_buffer(
+            'perdomain_scores',
+            torch.ones(len(train_domain_weights_dict)) *
+            np.log(len(tokenizer)))
         model.register_buffer('update_counter', torch.tensor(1))
 
     else:
@@ -334,7 +351,8 @@ def main():
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
-        data_collator=data_utils.get_data_collator(tokenizer, do_padding=data_args.do_padding),
+        data_collator=data_utils.get_data_collator(
+            tokenizer, do_padding=data_args.do_padding),
     )
 
     # Training
@@ -353,18 +371,26 @@ def main():
             avg_domain_weights_dict = {}
             for i in range(len(model.avg_domain_weights)):
                 domain_name = domain_list[i]
-                metrics[f'avg_domain_weight:{domain_name}'] = model.avg_domain_weights[i].item()
-                avg_domain_weights_dict[domain_name] = model.avg_domain_weights[i].item()
+                metrics[
+                    f'avg_domain_weight:{domain_name}'] = model.avg_domain_weights[
+                        i].item()
+                avg_domain_weights_dict[
+                    domain_name] = model.avg_domain_weights[i].item()
 
             # save avg domain weights to json
-            avg_domain_weights_file = Path(training_args.output_dir) / 'avg_domain_weights.json'
+            avg_domain_weights_file = Path(
+                training_args.output_dir) / 'avg_domain_weights.json'
             with open(avg_domain_weights_file, 'w') as f:
                 json.dump(avg_domain_weights_dict, f, indent=2)
 
             # also save to configs dir
-            config_dict = {"train_domain_weights": avg_domain_weights_dict,
-                           "eval_domain_weights": avg_domain_weights_dict}
-            config_dict_file = Path(__file__).parent.parent / 'configs' / f"{Path(training_args.output_dir).name}.json"
+            config_dict = {
+                "train_domain_weights": avg_domain_weights_dict,
+                "eval_domain_weights": avg_domain_weights_dict
+            }
+            config_dict_file = Path(
+                __file__
+            ).parent.parent / 'configs' / f"{Path(training_args.output_dir).name}.json"
             with open(config_dict_file, 'w') as f:
                 json.dump(config_dict, f, indent=2)
 
@@ -378,13 +404,13 @@ def main():
 
         checkpoint_dir = get_last_checkpoint(training_args.output_dir)
         trainer.load_checkpoint(checkpoint_dir)
-        state = TrainerState.load_from_json(str(Path(checkpoint_dir) / TRAINER_STATE_NAME))
+        state = TrainerState.load_from_json(
+            str(Path(checkpoint_dir) / TRAINER_STATE_NAME))
 
         metrics = trainer.evaluate()
 
         trainer.log_metrics(f"eval_{state.global_step}", metrics)
         trainer.save_metrics(f"eval_{state.global_step}", metrics)
-
 
 
 def _mp_fn(index):

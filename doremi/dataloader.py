@@ -1,4 +1,7 @@
 from pathlib import Path
+from typing import Any, Dict, List, Callable, Optional, Sequence, Union
+import os
+from streaming import Stream, StreamingDataset
 from collections import Counter
 import pickle
 import random
@@ -24,366 +27,284 @@ import shutil
 
 logger = get_logger(__name__)
 
-
-RANDOM_BATCH_SIZE = 8192
-DEFAULT_SEED=111
-
-class UpdatableRandomlyCyclingMultiSourcesExamplesIterable(
-        RandomlyCyclingMultiSourcesExamplesIterable):
-
-    def __init__(self, ex_iterables, generator, probabilities=None, probabilities_file=None, stopping_strategy="all_exhausted"):
-        '''
-        probabilities: vector of static probabilities over training
-        probabilities_file: tmp file to store dynamically changing probabilities
-        '''
-        super().__init__(ex_iterables, generator, stopping_strategy=stopping_strategy)
-        self.probabilities_file = probabilities_file
-        self.probabilities = probabilities
-
-    @staticmethod
-    def _iter_random_indices(rng, num_sources, probabilities_file=None, probabilities=None, random_batch_size=RANDOM_BATCH_SIZE):
-        while True:
-            # read domain weights
-            if probabilities_file is not None:
-                with open(probabilities_file, 'rb') as f:
-                    probabilities = pickle.load(f)
-
-            yield from (int(i) for i in rng.choice(num_sources, size=random_batch_size, p=probabilities))
-
-    def _give_indice_iterator(self):
-        rng = deepcopy(self.generator)
-        return self._iter_random_indices(rng, len(self.ex_iterables), probabilities_file=self.probabilities_file, probabilities=self.probabilities)
-
-    def shard_data_sources(self, shard_indices):
-        return self
-
-    @property
-    def n_shards(self):
-        return 1
-
-    def shuffle_data_sources(self, seed):
-        self.ex_iterables = [ex_iterable.shuffle_data_sources(seed) for ex_iterable in self.ex_iterables]
-        return self
+PILE_NAMES_ORDERED = [
+    "Pile-CC", "PubMed Central", "Books3", "OpenWebText2", "ArXiv", "Github",
+    "FreeLaw", "StackExchange", "USPTO Backgrounds", "PubMed Abstracts",
+    "Gutenberg (PG-19)", "OpenSubtitles", "Wikipedia (en)", "DM Mathematics",
+    "Ubuntu IRC", "BookCorpus2", "EuroParl", "HackerNews", "YoutubeSubtitles",
+    "PhilPapers", "NIH ExPorter", "Enron Emails"
+]
 
 
-def interleave_datasets(datasets, probabilities=None, probabilities_file=None, seed=None, stopping_strategy='all_exhausted'):
-    iterable_datasets = []
-    for dataset in datasets:
-        if not isinstance(dataset, IterableDataset):
-            iterable_datasets.append(dataset.to_iterable_dataset())
-        else:
-            iterable_datasets.append(dataset)
+class StreamingTextDataset(StreamingDataset):
+    """Generic text dataset using MosaicML's StreamingDataset.
 
-    ex_iterables = [d._ex_iterable for d in iterable_datasets]
+    Args:
+        tokenizer (Tokenizer): HuggingFace tokenizer to
+            tokenize samples.
+        max_seq_len (int): The max sequence length of each sample.
+        streams (Sequence[Stream], optional): One or more Streams to stream/cache samples from,
+            which may be upsampled or downsampled. StreamingDataset uses either ``streams`` or
+            ``remote``/``local``. Defaults to ``None``.
+        remote (str, optional): Remote path or directory to download the dataset from. If ``None``,
+            its data must exist locally. StreamingDataset uses either ``streams`` or
+            ``remote``/``local``. Defaults to ``None``.
+        local (str, optional): Local working directory to download shards to. This is where shards
+            are cached while they are being used. Uses a temp directory if not set.
+            StreamingDataset uses either ``streams`` or ``remote``/``local``. Defaults to ``None``.
+        split (str, optional): Which dataset split to use, if any. If provided, we stream from/to
+            the ``split`` subdirs of  ``remote`` and ``local``. Defaults to ``None``.
+        download_retry (int): Number of download re-attempts before giving up. Defaults to ``2``.
+        download_timeout (float): Number of seconds to wait for a shard to download before raising
+            an exception. Defaults to ``60``.
+        validate_hash (str, optional): Optional hash or checksum algorithm to use to validate
+            shards. Defaults to ``None``.
+        keep_zip (bool): Whether to keep or delete the compressed form when decompressing
+            downloaded shards. If ``False``, keep iff remote is local or no remote. Defaults to
+            `False``.
+        epoch_size (int, optional): Number of samples to draw per epoch balanced across all
+            streams. If ``None``, takes its value from the total number of underlying samples.
+            Provide this field if you are weighting streams relatively to target a larger or
+            smaller epoch size. Defaults to ``None``.
+        predownload (int, optional): Target number of samples ahead to download the shards of while
+            iterating. Defaults to ``100_000``.
+        cache_limit (Union[int, str], optional) - Maximum size in bytes of this StreamingDataset's
+            shard cache. Before downloading a shard, the least recently used resident shard(s) may
+            be evicted (deleted from the local cache) in order to stay under the limit. Set to None
+            to disable shard eviction. Supports integer bytes as well as string human-readable
+            bytes (e.g., 100b, 64kb, 77mb, and so on). Defaults to None.
+        partition_algo (str): Which partitioning algorithm to use. Defaults to ``orig``.
+        num_canonical_nodes (int, optional): Canonical number of nodes for shuffling with
+            resumption. Defaults to ``None``, which is interpreted as the number of nodes of the
+            initial run.
+        batch_size (int, optional): Batch size of its DataLoader, which affects how the dataset is
+            partitioned over the workers. Defaults to ``None``.
+        shuffle (bool): Whether to iterate over the samples in randomized order. Defaults to
+            ``False``.
+        shuffle_algo (str): Which shuffling algorithm to use. Defaults to ``py1b``.
+        shuffle_seed (int): Seed for Deterministic data shuffling. Defaults to ``9176``.
+        shuffle_block_size (int): Unit of shuffle. Defaults to ``1 << 18``.
+    """
 
-    generator = np.random.default_rng(seed)
-    ex_iterable = UpdatableRandomlyCyclingMultiSourcesExamplesIterable(
-            ex_iterables, generator=generator,
-            probabilities=probabilities, probabilities_file=probabilities_file,
-            stopping_strategy=stopping_strategy)
+    def __init__(self,
+                 tokenizer,
+                 max_seq_len: int,
+                 streams: Optional[Sequence[Stream]] = None,
+                 remote: Optional[str] = None,
+                 local: Optional[str] = None,
+                 split: Optional[str] = None,
+                 download_retry: int = 2,
+                 download_timeout: float = 60,
+                 validate_hash: Optional[str] = None,
+                 keep_zip: bool = False,
+                 epoch_size: Optional[int] = None,
+                 predownload: int = 100_000,
+                 cache_limit: Optional[Union[int, str]] = None,
+                 partition_algo: str = 'orig',
+                 num_canonical_nodes: Optional[int] = None,
+                 batch_size: Optional[int] = None,
+                 shuffle: bool = False,
+                 shuffle_algo: str = 'py1b',
+                 shuffle_seed: int = 9176,
+                 shuffle_block_size: int = 1 << 18,
+                 **kwargs: Dict[str, Any]):
 
-    return IterableDataset(ex_iterable=ex_iterable)
+        group_method = kwargs.pop('group_method', None)
+        if group_method is not None:
+            raise NotImplementedError(
+                'group_method is deprecated and has been removed.\nTo ' +
+                'concatenate, use the --concat_tokens ' +
+                'argument when creating your MDS dataset with concat_c4.py')
 
+        if kwargs is not None and len(kwargs) > 0:
+            raise ValueError(
+                f'StreamingTextDataset() got an unexpected keyword argument: {kwargs}'
+            )
 
-def get_dataset(pile_dir, domain_ids_dir, cache_dir=None, split='train'):
-    # initialize streaming datasets from pile_dir
-    pile_dir = Path(pile_dir)
-    domain_ids_split_dir = Path(domain_ids_dir) / split
-    if split == 'train':
-        data_files = [str(pile_dir / f"{subset}.jsonl.zst") for subset in PILE_SUBSETS]
-        domain_ids = [np.load(domain_ids_split_dir / f"{subset}_domain_ids.npy") for subset in PILE_SUBSETS]
-    elif split == 'validation':
-        data_files = [str(pile_dir / "val.jsonl.zst")]
-        domain_ids = [np.load(domain_ids_split_dir / f"{split}_domain_ids.npy")]
-    else:
-        data_files = [str(pile_dir / f"test.jsonl.zst")]
-        domain_ids = [np.load(domain_ids_split_dir / f"{split}_domain_ids.npy")]
-
-
-    ds_ls = []
-    for data_file in data_files:
-        ds = load_dataset('json',
-                          data_files=[data_file],
-                          cache_dir=cache_dir,
-                          streaming=True)['train']
-        ds_ls.append(ds)
-    return ds_ls, domain_ids
-
-
-def simulate_data_skip_per_domain(num_skip_examples, probabilities, rng, random_batch_size=RANDOM_BATCH_SIZE):
-    num_sources = len(probabilities)
-    sampled_domain_idxs = [
-        rng.choice(num_sources, size=random_batch_size, p=probabilities)
-        for _ in range(num_skip_examples // random_batch_size + 1)]
-    sampled_domain_idxs = np.concatenate(sampled_domain_idxs)[:num_skip_examples]
-    counts = Counter(sampled_domain_idxs)
-    return [counts.get(i, 0) for i in range(num_sources)]
-
-
-def determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_names):
-    if num_skip_examples == 0:
-        return {name: 0 for name in domain_names}
-
-    if domain_weights is None or seed is None or domain_names is None:
-        raise ValueError("If num_skip_examples > 0 then domain_weights, domain_names, and seed must not be None")
-
-    rng = np.random.default_rng(seed)
-    skip_per_domain = simulate_data_skip_per_domain(num_skip_examples, domain_weights, rng)
-    domain_name_to_skip_num = {name: num for name, num in zip(domain_names, skip_per_domain)}
-    return domain_name_to_skip_num
-
-
-def skippable_data_gen(shards, num_skip_examples=0):
-    num_skipped = 0
-    while True:
-        for shard_dir in shards:
-            shard = load_from_disk(dataset_path=str(shard_dir))
-            if num_skipped < num_skip_examples:
-                # try to skip examples
-                if len(shard) < (num_skip_examples - num_skipped):
-                    num_skipped += len(shard)
-                    continue
-                else:
-                    shard = shard.select(range(num_skip_examples - num_skipped, len(shard)))
-                    logger.info(f"Skipped {num_skip_examples} examples in {shard_dir}")
-                    num_skipped = num_skip_examples
-
-            for ex in shard:
-                yield ex
-
-
-def get_pile_datasets(
-        preprocessed_dir,
-        cache_dir=None,
-        split='train',
-        seed=DEFAULT_SEED,
-        domain_weights=None,
-        domain_names=None,
-        num_skip_examples=0):
-
-    domain_name_to_skip_num = determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_names)
-
-    preprocessed_dir = Path(preprocessed_dir) / split
-
-    all_ds = {}
-    for domain_dir in preprocessed_dir.iterdir():
-        if split == 'train':
-            shards = list(domain_dir.iterdir())
-            random.Random(seed).shuffle(shards)
-        else:
-            shards = [domain_dir]
-        ds = IterableDataset.from_generator(
-                skippable_data_gen,
-                gen_kwargs={'shards': shards,
-                            'num_skip_examples': domain_name_to_skip_num[domain_dir.name]}
-                )
-        all_ds[domain_dir.name] = ds
-        seed += 1
-    return all_ds
-
-
-def get_perdomain_datasets(
-        preprocessed_dir,
-        domain_weights_dict,
-        cache_dir=None,
-        split=None,
-        seed=DEFAULT_SEED,
-        domain_weights=None,
-        domain_names=None,
-        num_skip_examples=0):
-    '''
-    Returns a dictionary from domain name to IterableDataset.
-    '''
-    domain_name_to_skip_num = determine_skip_per_domain(num_skip_examples, seed, domain_weights, domain_names)
-
-    preprocessed_dir = Path(preprocessed_dir)
-    if split is not None and (preprocessed_dir / split).exists():
-        preprocessed_dir = preprocessed_dir / split
-    else:
-        logger.warn(f"No split used or split directory not found: using same data for all splits.")
-
-    domains = list(sorted(domain_weights_dict.keys()))
-
-    all_ds = {}
-    for domain in domains:
-        domain_dir = preprocessed_dir / domain
-
-        if (domain_dir / 'dataset_info.json').exists():
-            ds = load_from_disk(dataset_path=str(domain_dir))
-            logger.info(f"Loaded {domain_dir}. Length: {len(ds)}")
-        else:
-            curr_shards = list(domain_dir.iterdir())
-            # shuffle shard order
-            random.Random(seed).shuffle(curr_shards)
-            ds = IterableDataset.from_generator(
-                    skippable_data_gen,
-                    gen_kwargs={'shards': curr_shards,
-                                'num_skip_examples': domain_name_to_skip_num[domain]}
+        if local is not None and (remote is None or (local == remote)):
+            if os.path.isdir(local):
+                contents = set(os.listdir(local))
+                if split not in contents:
+                    raise ValueError(
+                        f'local directory {local} does not contain split {split}'
                     )
-            seed += 1
-        all_ds[domain] = ds
-    return all_ds
+
+        # Build Dataset
+        super().__init__(
+            streams=streams,
+            remote=remote,
+            local=local,
+            split=split,
+            download_retry=download_retry,
+            download_timeout=download_timeout,
+            validate_hash=validate_hash,
+            keep_zip=keep_zip,
+            epoch_size=epoch_size,
+            predownload=predownload,
+            cache_limit=cache_limit,
+            partition_algo=partition_algo,
+            num_canonical_nodes=num_canonical_nodes,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            shuffle_algo=shuffle_algo,
+            shuffle_seed=shuffle_seed,
+        )
+        self.tokenizer = tokenizer
+        self.max_seq_len = max_seq_len
+
+    # How to tokenize a text sample to a token sample
+    def _tokenize(self, text_sample):
+        if self.tokenizer._pad_token is None:
+            # Some tokenizers (e.g. GPT2 tokenizer) have no padding token which causes bugs
+            raise RuntimeError(
+                'If tokenizing on-the-fly, tokenizer must have a pad_token_id')
+
+        return self.tokenizer(text_sample['text'],
+                              truncation=True,
+                              padding='max_length',
+                              max_length=self.max_seq_len)
+
+    def _read_binary_tokenized_sample(self, sample):
+        return torch.from_numpy(
+            np.frombuffer(sample['tokens'],
+                          dtype=np.int64)[:self.max_seq_len].copy())
+
+    # How to process a sample
+    def __getitem__(self, idx: int):
+        sample = super().__getitem__(idx)
+        if 'text' in sample:
+            token_sample = self._tokenize(sample)
+        elif 'tokens' in sample and 'domain_idx' in sample:
+            token_sample = {
+                'tokens': self._read_binary_tokenized_sample(sample),
+                'domain_ids': sample['domain_idx']
+            }
+        else:
+            raise RuntimeError(
+                'StreamingTextDataset needs samples to have a `text` or `tokens` column'
+            )
+        return token_sample
 
 
-def get_preprocessed_mixed_dataset(
-        preprocessed_dir,
-        domain_weights_dict,
-        dataset_name='pile',
-        cache_dir=None,
-        split='train',
-        seed=DEFAULT_SEED,
-        max_samples=None,
-        add_domain_id=False,
-        tmp_file=None,
-        tokenizer=None,
-        no_interleave=False,
-        shuffle=False,
-        num_skip_examples=0):
-    '''preprocessed_dir: has the following format
-               first level: domain directories
-               second level: shards for each domain. number of shards per domain should be the same.
+class ConcatenatedSequenceCollatorWrapper:
+    """Collator wrapper to add sequence_id to batch."""
 
-       domain_weights_dict: dict from domain name to weight
-    '''
-    domain_names = list(sorted(domain_weights_dict.keys()))
-    domain_to_idx = {domain_names[i]: i for i in range(len(domain_names))}
-    domain_weights = np.asarray([domain_weights_dict[domain_name] for domain_name in domain_names])
-    domain_weights = domain_weights / domain_weights.sum()
+    def __init__(
+        self,
+        base_collator: Callable,
+        eos_token_id=None,
+        bos_token_id=None,
+    ):
+        self.base_collator = base_collator
+        if (eos_token_id is None) and (bos_token_id is None):
+            raise ValueError(
+                'Must supply a value for either eos_token_id or bos_token_id, but got None for both.'
+            )
+        if (eos_token_id is not None) and (bos_token_id is not None):
+            raise ValueError(
+                'Cannot use *both* EOS and BOS tokens for detecting sequence boundaries. ' +\
+                'Please supply `eos_token_id` if sequences end with an EOS token, or use ' +\
+                '`bos_token_id` if sequences start with a BOS token.'
+            )
 
-    # write domain weights to file if tmp_file is set
-    if tmp_file is not None:
-        probabilities_tmp_file = tmp_file
+        self.split_token_id = eos_token_id
+        self.bos_mode = False
+        if eos_token_id is None:
+            self.split_token_id = bos_token_id
+            self.bos_mode = True
 
-        with open(str(probabilities_tmp_file), 'wb') as f:
-            pickle.dump(domain_weights, f)
-        probabilities = None
-    else:
-        probabilities = domain_weights
-        probabilities_tmp_file = None
+    def __call__(self, examples: List[Any]) -> Dict[str, torch.Tensor]:
+        batch = self.base_collator(examples)
+        batch['sequence_id'] = self.get_sequence_id_from_batch(batch)
+        return batch
 
-    if dataset_name == 'pile':
-        all_ds = get_pile_datasets(
-                preprocessed_dir,
-                cache_dir=cache_dir,
-                split=split,
-                seed=seed,
-                domain_weights=domain_weights,
-                domain_names=domain_names,
-                num_skip_examples=num_skip_examples)
-    else:
-        try:
-            all_ds = get_perdomain_datasets(
-                preprocessed_dir, 
-                domain_weights_dict,
-                cache_dir=cache_dir,
-                split=split,
-                seed=seed,
-                domain_weights=domain_weights,
-                domain_names=domain_names,
-                num_skip_examples=num_skip_examples)
-        except Exception:
-            raise ValueError(f"dataset_name {dataset_name} not implemented.")
+    def get_sequence_id_from_batch(
+            self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+        is_separator = torch.eq(batch['input_ids'],
+                                self.split_token_id)  # type: ignore
+        cumulative_sep = torch.cumsum(is_separator,
+                                      dim=1).to(batch['input_ids'].dtype)
+        # If separator token is bos, we're already done
+        if self.bos_mode:
+            return cumulative_sep
 
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+        # If separator token is eos, right shift 1 space
+        left_zeros = cumulative_sep.new_zeros((cumulative_sep.shape[0], 1))
+        return torch.cat([left_zeros, cumulative_sep[:, :-1]], dim=1)
 
-    def add_domain_id_fn(example, domain_idx):
-        if 'domain_id' not in example:
-            example['domain_id'] = domain_idx
-        return example
 
-    domain_ds_ls = []
-    for domain_name in domain_names:
-        domain_idx = domain_to_idx[domain_name]
-        domain_ds = all_ds[domain_name]
-        # add domain_id if necessary
-        if add_domain_id:
-            domain_ds = domain_ds.map(partial(add_domain_id_fn, domain_idx=domain_idx))
-        domain_ds_ls.append(domain_ds)
+def get_preprocessed_mixed_dataset(domain_weights_dict,
+                                   split,
+                                   tokenizer,
+                                   seed=DEFAULT_SEED):
+    streams = []
+    for domain_name, weight in domain_weights_dict.items():
+        domain_idx = PILE_NAMES_ORDERED.index(domain_name)
+        stream_cfg = {
+            "local": f"/tmp/streaming/dataset/{split}/domain-{domain_idx}",
+            "remote":
+            f"oci://mosaicml-internal-doremi/pile/pre-concat/gpt-neox-20b-seqlen-1024/data-sources/base/200K-samples-baseline-sd-17/domain-{domain_idx}",
+            "split": split
+        }
+        streams.append(Stream(**stream_cfg))
 
-    if no_interleave:
-        # instead of interleaving, run through each dataset
-        def data_generator(shards):
-            for shard in shards:
-                for ex in shard:
-                    yield ex
-        ds = IterableDataset.from_generator(data_generator, gen_kwargs={'shards': domain_ds_ls})
-        logger.info("Not interleaving dataset - will not sample according to domain weights")
+    dataset = StreamingTextDataset(tokenizer=tokenizer,
+                                   streams=streams,
+                                   **DATASET_CFG,
+                                   seed=seed)
 
-    else:
-        ds = interleave_datasets(
-                domain_ds_ls,
-                probabilities=probabilities,
-                probabilities_file=probabilities_tmp_file,
-                seed=seed)
-
-    def take_data_generator(ds, max_samples):
-        idx = 0
-        for ex in ds:
-            yield ex
-            idx += 1
-            if max_samples is not None and idx >= max_samples:
-                return
-
-    ds = IterableDataset.from_generator(take_data_generator, gen_kwargs={'ds': ds, 'max_samples': max_samples})
-    if shuffle:
-        ds = ds.shuffle(seed=seed+2, buffer_size=10000)
-    return ds
+    return dataset
 
 
 def get_data_collator(tokenizer, return_tensors='pt', do_padding=False):
-    def data_collator(features):
-        if not do_padding:
-            batch = {
-                    k: torch.tensor([f[k] for f in features])
-                    for k in features[0].keys()
-                    }
-        else:
-            batch = tokenizer.pad(features, return_tensors=return_tensors, pad_to_multiple_of=tokenizer.model_max_length)
-        batch['attention_mask'] = batch['attention_mask'].long()
-        batch['input_ids'] = batch['input_ids'].long()
 
-        batch.pop("special_tokens_mask", None)
-        if 'labels' not in batch:
-            labels = batch['input_ids'].clone()
-            batch["labels"] = labels
+    collate_fn = transformers.DataCollatorForLanguageModeling(
+        tokenizer=tokenizer, mlm=False, mlm_probability=None)
 
-        if tokenizer.pad_token_id is not None:
-            batch['labels'][batch['labels'] == tokenizer.pad_token_id] = -100
+    # Need to figure out how gpt2 handles eos
+    collate_fn = ConcatenatedSequenceCollatorWrapper(base_collator=collate_fn,
+                                                     eos_token_id=eos_token_id,
+                                                     bos_token_id=bos_token_id)
 
-        if 'domain_ids' not in batch and 'domain_id' in batch:
-            batch['domain_ids'] = batch['domain_id']  # compat
-            batch.pop('domain_id')
-        return batch
-    return data_collator
-
+    return collate_fn
 
 
 if __name__ == "__main__":
     # a short test
 
-    PILE_DOMAINS = ['ArXiv', 'BookCorpus2', 'Books3', 'DM Mathematics', 'Enron Emails', 'EuroParl', 'FreeLaw', 'Github', 'Gutenberg (PG-19)', 'HackerNews', 'NIH ExPorter', 'OpenSubtitles', 'OpenWebText2', 'PhilPapers', 'Pile-CC', 'PubMed Abstracts', 'PubMed Central', 'StackExchange', 'USPTO Backgrounds', 'Ubuntu IRC', 'Wikipedia (en)', 'YoutubeSubtitles']
+    PILE_DOMAINS = [
+        'ArXiv', 'BookCorpus2', 'Books3', 'DM Mathematics', 'Enron Emails',
+        'EuroParl', 'FreeLaw', 'Github', 'Gutenberg (PG-19)', 'HackerNews',
+        'NIH ExPorter', 'OpenSubtitles', 'OpenWebText2', 'PhilPapers',
+        'Pile-CC', 'PubMed Abstracts', 'PubMed Central', 'StackExchange',
+        'USPTO Backgrounds', 'Ubuntu IRC', 'Wikipedia (en)', 'YoutubeSubtitles'
+    ]
 
-    DOMAIN_TO_IDX = {
-        name: idx for idx, name in enumerate(PILE_DOMAINS)}
+    DOMAIN_TO_IDX = {name: idx for idx, name in enumerate(PILE_DOMAINS)}
 
     PILE_SUBSETS = [f'0{i}' if i < 10 else str(i) for i in range(0, 30)]
 
     domain_weights_dict = {domain: 1 for domain in PILE_DOMAINS}
     ds, domain_weights = get_preprocessed_mixed_dataset(
-            preprocessed_dir='/path/to/preprocessed', # run filter_domains.py in scripts/
-            domain_weights_dict=domain_weights_dict,
-            cache_dir='/path/to/cache',
-            split='train',
-            sharded=True)
+        preprocessed_dir=
+        '/path/to/preprocessed',  # run filter_domains.py in scripts/
+        domain_weights_dict=domain_weights_dict,
+        cache_dir='/path/to/cache',
+        split='train',
+        sharded=True)
 
     tokenizer = AutoTokenizer.from_pretrained('gpt2', use_fast=True)
     tokenizer.pad_token = tokenizer.eos_token
 
-    dataloader = DataLoader(
-            ds, batch_size=512, num_workers=1, collate_fn=get_data_collator(tokenizer))
+    dataloader = DataLoader(ds,
+                            batch_size=512,
+                            num_workers=1,
+                            collate_fn=get_data_collator(tokenizer))
 
-    domain_weights_dict_2 = {domain: 1 if domain == 'Books3' else 0 for domain in PILE_DOMAINS}
+    domain_weights_dict_2 = {
+        domain: 1 if domain == 'Books3' else 0
+        for domain in PILE_DOMAINS
+    }
     domain_weights_2_vec = torch.tensor(list(domain_weights_dict_2.values()))
     domain_weights_2_vec = domain_weights_2_vec / domain_weights_2_vec.sum()
     phase_1_domains = [0] * len(PILE_DOMAINS)
@@ -404,12 +325,13 @@ if __name__ == "__main__":
     phase_1_domains = np.asarray(phase_1_domains)
     phase_2_domains = np.asarray(phase_2_domains)
     print("Phase 1")
-    print({domain: count / phase_1_domains.sum() for domain, count in zip(PILE_DOMAINS, phase_1_domains)})
+    print({
+        domain: count / phase_1_domains.sum()
+        for domain, count in zip(PILE_DOMAINS, phase_1_domains)
+    })
 
     print("Phase 2")
-    print({domain: count / phase_2_domains.sum() for domain, count in zip(PILE_DOMAINS, phase_2_domains)})
-
-
-
-
-
+    print({
+        domain: count / phase_2_domains.sum()
+        for domain, count in zip(PILE_DOMAINS, phase_2_domains)
+    })
