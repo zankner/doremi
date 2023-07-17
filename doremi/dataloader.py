@@ -11,6 +11,7 @@ from itertools import cycle, chain
 from functools import partial
 import uuid
 import numpy as np
+import transformers
 import torch
 from torch.utils.data import DataLoader, Sampler
 from datasets import load_dataset, Dataset, IterableDataset
@@ -27,6 +28,10 @@ import shutil
 
 logger = get_logger(__name__)
 
+DEFAULT_SEED = 17
+
+OCI_BASE = "oci://mosaicml-internal-doremi/pile/pre-concat/gpt-neox-20b-seqlen-2048/data-sources/base/25K-samples-baseline-sd-17"
+
 PILE_NAMES_ORDERED = [
     "Pile-CC", "PubMed Central", "Books3", "OpenWebText2", "ArXiv", "Github",
     "FreeLaw", "StackExchange", "USPTO Backgrounds", "PubMed Abstracts",
@@ -34,6 +39,14 @@ PILE_NAMES_ORDERED = [
     "Ubuntu IRC", "BookCorpus2", "EuroParl", "HackerNews", "YoutubeSubtitles",
     "PhilPapers", "NIH ExPorter", "Enron Emails"
 ]
+
+# Fixing max seq len to be 1024
+DATASET_CFG = {
+    #"eos_token_id": 0,
+    "max_seq_len": 1024,
+    "num_canonical_nodes": 128,
+    "shuffle_algo": "py1b",
+}
 
 
 class StreamingTextDataset(StreamingDataset):
@@ -243,15 +256,17 @@ def get_preprocessed_mixed_dataset(domain_weights_dict,
         stream_cfg = {
             "local": f"/tmp/streaming/dataset/{split}/domain-{domain_idx}",
             "remote":
-            f"oci://mosaicml-internal-doremi/pile/pre-concat/gpt-neox-20b-seqlen-1024/data-sources/base/200K-samples-baseline-sd-17/domain-{domain_idx}",
-            "split": split
+            f"{OCI_BASE}/domain-{domain_idx}",
+            "split": split,
+            "proportion": weight
         }
         streams.append(Stream(**stream_cfg))
 
+    dataset_cfg = {"shuffle": split == "train", "shuffle_seed": seed, **DATASET_CFG}
     dataset = StreamingTextDataset(tokenizer=tokenizer,
                                    streams=streams,
-                                   **DATASET_CFG,
-                                   seed=seed)
+                                   **dataset_cfg,
+                                   )
 
     return dataset
 
@@ -263,8 +278,8 @@ def get_data_collator(tokenizer, return_tensors='pt', do_padding=False):
 
     # Need to figure out how gpt2 handles eos
     collate_fn = ConcatenatedSequenceCollatorWrapper(base_collator=collate_fn,
-                                                     eos_token_id=eos_token_id,
-                                                     bos_token_id=bos_token_id)
+                                                     eos_token_id=0,
+                                                     bos_token_id=None)
 
     return collate_fn
 

@@ -67,7 +67,7 @@ accelerate launch \
     --lr_scheduler_name linear_warmup_cosine \
     --warmup_ratio 0.06 \
     --run_name ${NAME} \
-    --seed 1111 \
+    --seed 17 \
     --logging_strategy steps \
     --logging_steps 100 \
     --logging_first_step \
