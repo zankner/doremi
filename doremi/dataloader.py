@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, List, Callable, Optional, Sequence, Union
+from typing import Any, Dict, List, Callable, Optional, Sequence, Union, Mapping
 import os
 from streaming import Stream, StreamingDataset
 from collections import Counter
@@ -30,7 +30,8 @@ logger = get_logger(__name__)
 
 DEFAULT_SEED = 17
 
-OCI_BASE = "oci://mosaicml-internal-doremi/pile/pre-concat/gpt-neox-20b-seqlen-2048/data-sources/base/25K-samples-baseline-sd-17"
+OCI_BASE = "oci://mosaicml-internal-doremi/pile/pre-concat/gpt-neox-20b-seqlen-2048/data-sources/base/all-samples-baseline-sd-17-sd-17"
+#OCI_BASE = "oci://mosaicml-internal-doremi/pile/pre-concat/gpt-neox-20b-seqlen-2048/data-sources/base/all-samples-baseline-sd-17-sd-17"
 
 PILE_NAMES_ORDERED = [
     "Pile-CC", "PubMed Central", "Books3", "OpenWebText2", "ArXiv", "Github",
@@ -46,6 +47,8 @@ DATASET_CFG = {
     "max_seq_len": 1024,
     "num_canonical_nodes": 128,
     "shuffle_algo": "py1b",
+    "predownload": 16777216,
+    "shuffle_block_size": 16777216
 }
 
 
@@ -227,8 +230,15 @@ class ConcatenatedSequenceCollatorWrapper:
             self.bos_mode = True
 
     def __call__(self, examples: List[Any]) -> Dict[str, torch.Tensor]:
-        batch = self.base_collator(examples)
+        if isinstance(examples[0], Mapping):
+            batch = self.base_collator(
+                [example["tokens"] for example in examples])
+        else:
+            batch = self.base_collator(examples)
         batch['sequence_id'] = self.get_sequence_id_from_batch(batch)
+        if isinstance(examples[0], Mapping):
+            batch["domain_ids"] = torch.tensor(
+                [example["domain_ids"] for example in examples])
         return batch
 
     def get_sequence_id_from_batch(

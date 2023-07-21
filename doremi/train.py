@@ -65,7 +65,7 @@ from transformers.models.gpt2.configuration_gpt2 import GPT2Config
 from doremi.training_args import ModelArguments, DataTrainingArguments, FullTrainingArguments
 import doremi.dataloader as data_utils
 from doremi.trainer import DoReMiTrainer
-import doremi.models as doremi_models
+from doremi.models import load_mpt_model
 try:
     from flash_attn.models.gpt_neox import gpt_neox_config_to_gpt2_config
 except Exception:
@@ -132,28 +132,29 @@ def main():
     )
     logger.info(f"Training/evaluation parameters {training_args}")
 
+    # Skipping resumption for now 
     # Detecting last checkpoint.
-    last_checkpoint = None
-    num_skip_examples = 0
-    if os.path.isdir(
-            training_args.output_dir
-    ) and training_args.do_train and not training_args.overwrite_output_dir:
-        last_checkpoint = get_last_checkpoint(training_args.output_dir)
-        if last_checkpoint is None and len(os.listdir(
-                training_args.output_dir)) > 0:
-            raise ValueError(
-                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
-                "Use --overwrite_output_dir to overcome.")
-        elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
-            logger.info(
-                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
-                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
-            )
-            state = TrainerState.load_from_json(
-                str(Path(last_checkpoint) / TRAINER_STATE_NAME))
-            global_batch_size = training_args.train_batch_size * training_args.gradient_accumulation_steps * training_args.world_size
-            num_skip_examples = state.global_step * global_batch_size
-            logger.info(f"Skipping {num_skip_examples} examples")
+    # last_checkpoint = None
+    # num_skip_examples = 0
+    # if os.path.isdir(
+            # training_args.output_dir
+    # ) and training_args.do_train and not training_args.overwrite_output_dir:
+        # last_checkpoint = get_last_checkpoint(training_args.output_dir)
+        # if last_checkpoint is None and len(os.listdir(
+                # training_args.output_dir)) > 0:
+            # raise ValueError(
+                # f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                # "Use --overwrite_output_dir to overcome.")
+        # elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+            # logger.info(
+                # f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                # "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            # )
+            # state = TrainerState.load_from_json(
+                # str(Path(last_checkpoint) / TRAINER_STATE_NAME))
+            # global_batch_size = training_args.train_batch_size * training_args.gradient_accumulation_steps * training_args.world_size
+            # num_skip_examples = state.global_step * global_batch_size
+            # logger.info(f"Skipping {num_skip_examples} examples")
 
     # Set seed before initializing model.
     set_seed(training_args.seed)
@@ -164,65 +165,65 @@ def main():
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
 
-    config_kwargs = {
-        "cache_dir": model_args.cache_dir,
-        "revision": model_args.model_revision,
-        "use_auth_token": True if model_args.use_auth_token else None,
-    }
-    if model_args.config_name:
-        config = AutoConfig.from_pretrained(model_args.config_name,
-                                            **config_kwargs)
-    elif model_args.model_name_or_path:
-        config = AutoConfig.from_pretrained(model_args.model_name_or_path,
-                                            **config_kwargs)
-        if model_args.model_type == 'gpt_neox_flash':
-            config = gpt_neox_config_to_gpt2_config(config)
-            config.use_flash_attn = True
-            config.fused_mlp = True
-            config.fused_bias_fc = True
-            config.fused_dropout_add_ln = True
-            config.pad_vocab_size_multiple = 8
-            config.activation_function = 'gelu_new'
-            config.n_inner = None
-            # disable absolute
-            config.max_position_embeddings = 0
-    else:
-        if model_args.model_type == 'gpt_flash':
-            config = GPT2Config(vocab_size=50257,
-                                n_positions=2048,
-                                n_embd=2048,
-                                n_layer=24,
-                                n_head=16,
-                                scale_attn_by_inverse_layer_idx=True,
-                                rotary_emb_fraction=0.5,
-                                use_flash_attn=True,
-                                fused_mlp=True,
-                                fused_bias_fc=True,
-                                fused_dropout_add_ln=True,
-                                pad_vocab_size_multiple=8)
-            # disable absolute
-            config.max_position_embeddings = 0
-        elif model_args.model_type == 'gpt_neox_flash':
-            # convert to GPT2 config
-            config = CONFIG_MAPPING['gpt_neox']()
-            config = gpt_neox_config_to_gpt2_config(config)
-            config.use_flash_attn = True
-            config.fused_mlp = True
-            config.fused_bias_fc = True
-            config.fused_dropout_add_ln = True
-            config.pad_vocab_size_multiple = 8
-            config.activation_function = 'gelu_new'
-            config.n_inner = None
-            # disable absolute
-            config.max_position_embeddings = 0
-        else:
-            config = CONFIG_MAPPING[model_args.model_type]()
-        logger.warning(
-            "You are instantiating a new config instance from scratch.")
-        if model_args.config_overrides is not None:
-            logger.info(f"Overriding config: {model_args.config_overrides}")
-            config.update_from_string(model_args.config_overrides)
-            logger.info(f"New config: {config}")
+    #config_kwargs = {
+    #    "cache_dir": model_args.cache_dir,
+    #    "revision": model_args.model_revision,
+    #    "use_auth_token": True if model_args.use_auth_token else None,
+    #}
+    #if model_args.config_name:
+    #    config = AutoConfig.from_pretrained(model_args.config_name,
+    #                                        **config_kwargs)
+    #elif model_args.model_name_or_path:
+    #    config = AutoConfig.from_pretrained(model_args.model_name_or_path,
+    #                                        **config_kwargs)
+    #    if model_args.model_type == 'gpt_neox_flash':
+    #        config = gpt_neox_config_to_gpt2_config(config)
+    #        config.use_flash_attn = True
+    #        config.fused_mlp = True
+    #        config.fused_bias_fc = True
+    #        config.fused_dropout_add_ln = True
+    #        config.pad_vocab_size_multiple = 8
+    #        config.activation_function = 'gelu_new'
+    #        config.n_inner = None
+    #        # disable absolute
+    #        config.max_position_embeddings = 0
+    #else:
+    #    if model_args.model_type == 'gpt_flash':
+    #        config = GPT2Config(vocab_size=50257,
+    #                            n_positions=2048,
+    #                            n_embd=2048,
+    #                            n_layer=24,
+    #                            n_head=16,
+    #                            scale_attn_by_inverse_layer_idx=True,
+    #                            rotary_emb_fraction=0.5,
+    #                            use_flash_attn=True,
+    #                            fused_mlp=True,
+    #                            fused_bias_fc=True,
+    #                            fused_dropout_add_ln=True,
+    #                            pad_vocab_size_multiple=8)
+    #        # disable absolute
+    #        config.max_position_embeddings = 0
+    #    elif model_args.model_type == 'gpt_neox_flash':
+    #        # convert to GPT2 config
+    #        config = CONFIG_MAPPING['gpt_neox']()
+    #        config = gpt_neox_config_to_gpt2_config(config)
+    #        config.use_flash_attn = True
+    #        config.fused_mlp = True
+    #        config.fused_bias_fc = True
+    #        config.fused_dropout_add_ln = True
+    #        config.pad_vocab_size_multiple = 8
+    #        config.activation_function = 'gelu_new'
+    #        config.n_inner = None
+    #        # disable absolute
+    #        config.max_position_embeddings = 0
+    #    else:
+    #        config = CONFIG_MAPPING[model_args.model_type]()
+    #    logger.warning(
+    #        "You are instantiating a new config instance from scratch.")
+    #    if model_args.config_overrides is not None:
+    #        logger.info(f"Overriding config: {model_args.config_overrides}")
+    #        config.update_from_string(model_args.config_overrides)
+    #        logger.info(f"New config: {config}")
 
     tokenizer_kwargs = {
         "cache_dir": model_args.cache_dir,
@@ -233,43 +234,22 @@ def main():
     if model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name,
                                                   **tokenizer_kwargs)
-    elif model_args.model_name_or_path:
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_args.model_name_or_path, **tokenizer_kwargs)
     else:
         raise ValueError(
             "You are instantiating a new tokenizer from scratch. This is not supported by this script."
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
 
-    if model_args.model_name_or_path:
-        torch_dtype = (model_args.torch_dtype if model_args.torch_dtype in [
-            "auto", None
-        ] else getattr(torch, model_args.torch_dtype))
-        if model_args.model_type in {'gpt_flash', 'gpt_neox_flash'}:
-            model = doremi_models.GPTFlashAttnLMHeadModel.from_pretrained(
-                model_args.model_name_or_path, config=config)
-        else:
-            model = AutoModelForCausalLM.from_pretrained(
-                model_args.model_name_or_path,
-                from_tf=bool(".ckpt" in model_args.model_name_or_path),
-                config=config,
-                cache_dir=model_args.cache_dir,
-                revision=model_args.model_revision,
-                use_auth_token=True if model_args.use_auth_token else None,
-                torch_dtype=torch_dtype,
-            )
-    else:
-        if model_args.model_type in {'gpt_flash', 'gpt_neox_flash'}:
-            model = doremi_models.GPTFlashAttnLMHeadModel(config)
-        else:
-            model = AutoModelForCausalLM.from_config(config)
-
+    if model_args.model_name:
+        model = load_mpt_model(model_args.model_name, tokenizer)
         n_params = sum({p.data_ptr(): p.numel()
                         for p in model.parameters()}.values())
         logger.info(
             f"Training new model from scratch - Total size={n_params/2**20:.2f}M params"
         )
+    else:
+        raise ValueError("Must specify model name")
+
 
     with open(training_args.domain_config_path, 'r') as f:
         domain_config = json.load(f)
@@ -358,10 +338,10 @@ def main():
     # Training
     if training_args.do_train:
         checkpoint = None
-        if training_args.resume_from_checkpoint is not None:
-            checkpoint = training_args.resume_from_checkpoint
-        elif last_checkpoint is not None:
-            checkpoint = last_checkpoint
+        #if training_args.resume_from_checkpoint is not None:
+            #checkpoint = training_args.resume_from_checkpoint
+        #elif last_checkpoint is not None:
+            #checkpoint = last_checkpoint
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()  # Saves the tokenizer too for easy upload
 

@@ -9,7 +9,7 @@ setup(
     author_email='xie@cs.stanford.edu',
     packages=find_packages('.'),
     install_requires=[
-        'git+https://github.com/zankner/llm-foundry.git@fix-accel'
+        'llm-foundry@git+https://github.com/zankner/llm-foundry.git@fix-accel',
         'tokenizers==0.13.2',
         'transformers==4.27.2',
         'mosaicml-streaming',
@@ -17,7 +17,6 @@ setup(
         'torchvision',
         'datasets==2.10.1',
         'zstandard',
-        'accelerate==0.18.0',
         'bitsandbytes==0.37.2',
         'evaluate==0.4.0',
         'scikit-learn==1.2.2',
