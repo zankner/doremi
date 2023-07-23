@@ -389,6 +389,7 @@ class DoReMiTrainer(Trainer):
                         torch.zeros_like(excess_loss)
                         for _ in range(self.args.world_size)
                     ]
+                    print(dist.get_rank(), "current rank")
                     dist.gather(excess_loss, gathered_excess_losses, dst=0)
                     gathered_excess_losses = torch.cat(gathered_excess_losses,
                                                        dim=0)
