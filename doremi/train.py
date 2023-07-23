@@ -132,29 +132,29 @@ def main():
     )
     logger.info(f"Training/evaluation parameters {training_args}")
 
-    # Skipping resumption for now 
+    # Skipping resumption for now
     # Detecting last checkpoint.
     # last_checkpoint = None
     # num_skip_examples = 0
     # if os.path.isdir(
-            # training_args.output_dir
+    # training_args.output_dir
     # ) and training_args.do_train and not training_args.overwrite_output_dir:
-        # last_checkpoint = get_last_checkpoint(training_args.output_dir)
-        # if last_checkpoint is None and len(os.listdir(
-                # training_args.output_dir)) > 0:
-            # raise ValueError(
-                # f"Output directory ({training_args.output_dir}) already exists and is not empty. "
-                # "Use --overwrite_output_dir to overcome.")
-        # elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
-            # logger.info(
-                # f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
-                # "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
-            # )
-            # state = TrainerState.load_from_json(
-                # str(Path(last_checkpoint) / TRAINER_STATE_NAME))
-            # global_batch_size = training_args.train_batch_size * training_args.gradient_accumulation_steps * training_args.world_size
-            # num_skip_examples = state.global_step * global_batch_size
-            # logger.info(f"Skipping {num_skip_examples} examples")
+    # last_checkpoint = get_last_checkpoint(training_args.output_dir)
+    # if last_checkpoint is None and len(os.listdir(
+    # training_args.output_dir)) > 0:
+    # raise ValueError(
+    # f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+    # "Use --overwrite_output_dir to overcome.")
+    # elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+    # logger.info(
+    # f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+    # "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+    # )
+    # state = TrainerState.load_from_json(
+    # str(Path(last_checkpoint) / TRAINER_STATE_NAME))
+    # global_batch_size = training_args.train_batch_size * training_args.gradient_accumulation_steps * training_args.world_size
+    # num_skip_examples = state.global_step * global_batch_size
+    # logger.info(f"Skipping {num_skip_examples} examples")
 
     # Set seed before initializing model.
     set_seed(training_args.seed)
@@ -250,7 +250,6 @@ def main():
     else:
         raise ValueError("Must specify model name")
 
-
     with open(training_args.domain_config_path, 'r') as f:
         domain_config = json.load(f)
 
@@ -275,25 +274,9 @@ def main():
         )
 
     if training_args.reweight_domains:
-        torch_dtype = (model_args.torch_dtype if model_args.torch_dtype in [
-            "auto", None
-        ] else getattr(torch, model_args.torch_dtype))
-        if model_args.model_type in {'gpt_flash', 'gpt_neox_flash'}:
-            model_cls = doremi_models.GPTFlashAttnLMHeadModel
-            reference_model = model_cls.from_pretrained(
-                training_args.reference_model_name_or_path, config=config)
-        else:
-            model_cls = AutoModelForCausalLM
-
-            reference_model = model_cls.from_pretrained(
-                training_args.reference_model_name_or_path,
-                from_tf=bool(".ckpt" in model_args.model_name_or_path),
-                config=config,
-                cache_dir=model_args.cache_dir,
-                revision=model_args.model_revision,
-                use_auth_token=True if model_args.use_auth_token else None,
-                torch_dtype=torch_dtype,
-            )
+        reference_model = load_mpt_model(
+            model_args.model_name, tokenizer,
+            training_args.reference_model_name_or_path)
         for param in reference_model.parameters():
             param.requires_grad = False
         reference_model.eval()
@@ -339,9 +322,9 @@ def main():
     if training_args.do_train:
         checkpoint = None
         #if training_args.resume_from_checkpoint is not None:
-            #checkpoint = training_args.resume_from_checkpoint
+        #checkpoint = training_args.resume_from_checkpoint
         #elif last_checkpoint is not None:
-            #checkpoint = last_checkpoint
+        #checkpoint = last_checkpoint
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
