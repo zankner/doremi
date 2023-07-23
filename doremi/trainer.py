@@ -430,9 +430,11 @@ class DoReMiTrainer(Trainer):
                         self.token_masks = []
                         self.domain_ids = []
             else:
+                print(dist.get_rank(), "rank in else")
                 dist.gather(excess_loss, dst=0)
                 dist.gather(token_mask, dst=0)
                 dist.gather(inputs['domain_ids'], dst=0)
+            print("made it through")
 
             if self.args.doremi_optimizer == 'doremiv1':
                 # compute the rescaled loss, divide by domain weights
