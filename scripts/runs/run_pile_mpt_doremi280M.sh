@@ -30,9 +30,11 @@ NAME=complete_replicate_pile_neox_doremi_280M_256kvocab
 accelerate launch \
     --config_file accelerate_config.yml \
     --multi_gpu \
-    --num_processes 2 \
-    --num_machines 1 \
-    --main_process_port 60600 \
+    --num_machines 4 \
+    --num_processes 32 \
+    --machine_rank $NODE_RANK \
+    --main_process_ip $MASTER_ADDR \
+    --main_process_port $MASTER_PORT \
     doremi/train.py \
     --dataset_name pile \
     --model_name mpt-280M \
