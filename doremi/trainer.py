@@ -383,13 +383,12 @@ class DoReMiTrainer(Trainer):
                     model, inputs, return_pertoken_losses=True)
                 excess_loss = pertoken_loss - reference_pertoken_loss
 
-            if self.is_local_process_zero():
+            if self.is_world_process_zero():
                 with torch.no_grad():
                     gathered_excess_losses = [
                         torch.zeros_like(excess_loss)
                         for _ in range(self.args.world_size)
                     ]
-                    print(dist.get_rank(), "current rank")
                     dist.gather(excess_loss, gathered_excess_losses, dst=0)
                     gathered_excess_losses = torch.cat(gathered_excess_losses,
                                                        dim=0)
@@ -430,11 +429,9 @@ class DoReMiTrainer(Trainer):
                         self.token_masks = []
                         self.domain_ids = []
             else:
-                print(dist.get_rank(), "rank in else")
                 dist.gather(excess_loss, dst=0)
                 dist.gather(token_mask, dst=0)
                 dist.gather(inputs['domain_ids'], dst=0)
-            print("made it through")
 
             if self.args.doremi_optimizer == 'doremiv1':
                 # compute the rescaled loss, divide by domain weights
