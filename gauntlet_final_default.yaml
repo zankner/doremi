@@ -1,0 +1,64 @@
+integrations:
+- integration_type: git_repo
+  git_repo: mosaicml/llm-foundry
+  # git_branch: # use your branch
+  # git_commit: # OR use your commit hash
+  pip_install: -e ".[gpu]"
+  ssh_clone: false # Should be true if using a private repo
+
+command: |
+  pip install oci-cli
+  oci os object bulk-download -bn mosaicml-internal-replicate-doremi --prefix replicate/250M-params/final/complete_replicate_pile_neox_final_default_280M_50kvocab/checkpoint-200000/ --dest-dir /tmp/model/
+  oci os object bulk-download -bn mosaicml-internal-replicate-doremi --prefix config --dest-dir /tmp/
+  mv /tmp/config/* /tmp/model/replicate/250M-params/final/complete_replicate_pile_neox_final_default_280M_50kvocab/checkpoint-200000/ 
+  cd llm-foundry/scripts
+  composer eval/eval.py /mnt/config/parameters.yaml
+
+# Mosaic Cloud will use run_name (with a unique suffix) to populate the env var $RUN_NAME
+run_name: doremi-default-eval
+gpu_num: 8
+compute:
+  cluster: r1z1
+  gpu_type: a100_80gb
+# gpu_type:
+# cluster: # replace with your cluster here!
+
+image: mosaicml/llm-foundry:2.0.1_cu118-latest
+
+# The below is injected as a YAML file: /mnt/config/parameters.yaml
+parameters:
+  dist_timeout: 6000
+  seed: 1
+  max_seq_len: 1024
+  device_eval_batch_size: 32 
+  precision: amp_fp16
+
+  models:
+  -
+    model_name: doremi_baseline
+    # Tokenizer
+    tokenizer:
+      name: EleutherAI/gpt-neox-20b
+      kwargs:
+        model_max_length: ${max_seq_len}
+    model:
+      name: hf_causal_lm
+      pretrained_model_name_or_path: /tmp/model/replicate/250M-params/final/complete_replicate_pile_neox_final_default_280M_50kvocab/checkpoint-200000/
+      device: cpu
+      pretrained: true
+      use_auth_token: false
+
+
+  # FSDP config for model sharding
+  fsdp_config:
+      activation_checkpointing: false
+      activation_checkpointing_reentrant: false
+      activation_cpu_offload: false
+      limit_all_gathers: true
+      mixed_precision: PURE
+      sharding_strategy: FULL_SHARD
+      state_dict_type: full
+      verbose: false
+
+  icl_tasks: 'eval/yamls/tasks.yaml'
+  model_gauntlet: 'eval/yamls/model_gauntlet.yaml'

@@ -44,7 +44,7 @@ PILE_NAMES_ORDERED = [
 # Fixing max seq len to be 1024
 DATASET_CFG = {
     #"eos_token_id": 0,
-    "max_seq_len": 1024,
+    "max_seq_len": 2048,
     "num_canonical_nodes": 128,
     "shuffle_algo": "py1b",
     "predownload": 16777216,
@@ -265,18 +265,22 @@ def get_preprocessed_mixed_dataset(domain_weights_dict,
         domain_idx = PILE_NAMES_ORDERED.index(domain_name)
         stream_cfg = {
             "local": f"/tmp/streaming/dataset/{split}/domain-{domain_idx}",
-            "remote":
-            f"{OCI_BASE}/domain-{domain_idx}",
+            "remote": f"{OCI_BASE}/domain-{domain_idx}",
             "split": split,
             "proportion": weight
         }
         streams.append(Stream(**stream_cfg))
 
-    dataset_cfg = {"shuffle": split == "train", "shuffle_seed": seed, **DATASET_CFG}
-    dataset = StreamingTextDataset(tokenizer=tokenizer,
-                                   streams=streams,
-                                   **dataset_cfg,
-                                   )
+    dataset_cfg = {
+        "shuffle": split == "train",
+        "shuffle_seed": seed,
+        **DATASET_CFG
+    }
+    dataset = StreamingTextDataset(
+        tokenizer=tokenizer,
+        streams=streams,
+        **dataset_cfg,
+    )
 
     return dataset
 
